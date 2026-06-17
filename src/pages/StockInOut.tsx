@@ -3,6 +3,8 @@ import {
   Tabs, Table, Button, Form, Input, Select, Modal, InputNumber,
   Space, message, Tag, Tooltip
 } from 'antd'
+import type { FormInstance } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import {
   ImportOutlined, ExportOutlined, PlusOutlined,
   SearchOutlined, InboxOutlined, SendOutlined
@@ -139,7 +141,7 @@ export default function StockInOut() {
     }
   }
 
-  const handleBatchChange = (batchId: string, form: any) => {
+  const handleBatchChange = (batchId: string, form: FormInstance) => {
     const batch = vaccineBatches.find(b => b.id === batchId)
     if (batch) {
       form.setFieldsValue({
@@ -151,7 +153,7 @@ export default function StockInOut() {
     }
   }
 
-  const stockInColumns = [
+  const stockInColumns: ColumnsType<StockRecord> = [
     {
       title: '疫苗名称',
       dataIndex: 'vaccineName',
@@ -169,7 +171,7 @@ export default function StockInOut() {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 80,
-      render: (val: number, record: StockRecord) => `${val} ${record.unit}`,
+      render: (val, record) => `${val} ${record.unit}`,
     },
     {
       title: '单位',
@@ -200,7 +202,7 @@ export default function StockInOut() {
       dataIndex: 'acceptanceResult',
       key: 'acceptanceResult',
       width: 100,
-      render: (val: string) => (
+      render: (val) => (
         val === 'passed' 
           ? <Tag color="success">验收通过</Tag>
           : <Tag color="error">验收不通过</Tag>
@@ -210,7 +212,7 @@ export default function StockInOut() {
       title: '操作',
       key: 'action',
       width: 120,
-      render: (_, record: StockRecord) => (
+      render: (_, record) => (
         <Space>
           <Tooltip title="查看详情">
             <Button 
@@ -244,7 +246,7 @@ export default function StockInOut() {
     },
   ]
 
-  const stockOutColumns = [
+  const stockOutColumns: ColumnsType<StockRecord> = [
     {
       title: '疫苗名称',
       dataIndex: 'vaccineName',
@@ -262,7 +264,7 @@ export default function StockInOut() {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 80,
-      render: (val: number, record: StockRecord) => `${val} ${record.unit}`,
+      render: (val, record) => `${val} ${record.unit}`,
     },
     {
       title: '单位',
@@ -299,7 +301,7 @@ export default function StockInOut() {
       title: '操作',
       key: 'action',
       width: 120,
-      render: (_, record: StockRecord) => (
+      render: (_, record) => (
         <Space>
           <Tooltip title="查看详情">
             <Button 
@@ -331,13 +333,13 @@ export default function StockInOut() {
     },
   ]
 
-  const flowColumns = [
+  const flowColumns: ColumnsType<StockRecord> = [
     {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
       width: 80,
-      render: (val: string) => (
+      render: (val) => (
         val === 'in' 
           ? <Tag icon={<ImportOutlined />} color="blue">入库</Tag>
           : <Tag icon={<ExportOutlined />} color="orange">出库</Tag>
@@ -360,7 +362,7 @@ export default function StockInOut() {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 80,
-      render: (val: number, record: StockRecord) => `${val} ${record.unit}`,
+      render: (val, record) => `${val} ${record.unit}`,
     },
     {
       title: '单位',
@@ -372,7 +374,7 @@ export default function StockInOut() {
       title: '来源/去向',
       key: 'direction',
       width: 180,
-      render: (_, record: StockRecord) => (
+      render: (_, record) => (
         <Space>
           {record.type === 'in' ? (
             <><InboxOutlined style={{ color: '#1890ff' }} /> {record.source}</>
@@ -399,7 +401,7 @@ export default function StockInOut() {
       dataIndex: 'acceptanceResult',
       key: 'acceptanceResult',
       width: 100,
-      render: (val: string, record: StockRecord) => (
+      render: (val, record) => (
         record.type === 'in' ? (
           val === 'passed' 
             ? <Tag color="success">通过</Tag>

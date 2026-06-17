@@ -4,6 +4,7 @@ import {
   Space, message, Tag, Timeline, Card, Descriptions, Row, Col,
   Statistic, List, Divider, Empty
 } from 'antd'
+import type { InputRef } from 'antd/es/input/Input'
 import {
   SearchOutlined, QrcodeOutlined, ClockCircleOutlined,
   WarningOutlined, BarChartOutlined, PieChartOutlined,
@@ -15,6 +16,7 @@ import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import { useAppStore } from '@/store'
 import type { TraceCodeRecord, ChainBreakEvent, VaccinationStats } from '@/types'
+import type { ColumnsType } from 'antd/es/table'
 
 const { Option } = Select
 const { RangePicker } = DatePicker
@@ -80,7 +82,7 @@ export default function TraceStatistics() {
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const [vaccineFilter, setVaccineFilter] = useState('')
   const [clinicFilter, setClinicFilter] = useState('')
-  const scanInputRef = useRef<any>(null)
+  const scanInputRef = useRef<InputRef>(null)
 
   const {
     traceCodeRecords,
@@ -317,7 +319,7 @@ export default function TraceStatistics() {
     }
   }
 
-  const traceCodeColumns = [
+  const traceCodeColumns: ColumnsType<{time: string; location: string; operator: string; action: string}> = [
     {
       title: '扫描时间',
       dataIndex: 'time',
@@ -359,7 +361,7 @@ export default function TraceStatistics() {
     }
   ]
 
-  const statsColumns = [
+  const statsColumns: ColumnsType<VaccinationStats> = [
     {
       title: '日期',
       dataIndex: 'date',
@@ -552,7 +554,7 @@ export default function TraceStatistics() {
                   <Table
                     columns={traceCodeColumns}
                     dataSource={foundTraceRecord.scanHistory}
-                    rowKey={(record, index) => index.toString()}
+                    rowKey={(_, index) => String(index ?? 0)}
                     pagination={false}
                     size="small"
                   />

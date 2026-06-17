@@ -20,6 +20,7 @@ import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import { useAppStore } from '@/store'
 import type { ColdStorage, TemperatureRecord, AlarmRecord, TransportRecord } from '@/types'
+import type { ColumnsType } from 'antd/es/table'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -438,20 +439,20 @@ export default function TemperatureMonitor() {
     }
   }
 
-  const alarmColumns = [
+  const alarmColumns: ColumnsType<AlarmRecord> = [
     {
       title: '设备名称',
       dataIndex: 'deviceName',
       key: 'deviceName',
       width: 120,
-      render: (text: string) => <Text strong>{text}</Text>
+      render: (text) => <Text strong>{text}</Text>
     },
     {
       title: '设备类型',
       dataIndex: 'deviceType',
       key: 'deviceType',
       width: 100,
-      render: (type: string) => (
+      render: (type) => (
         <Tag icon={type.includes('车') ? <TruckOutlined /> : <HomeOutlined />}>
           {type}
         </Tag>
@@ -462,14 +463,14 @@ export default function TemperatureMonitor() {
       dataIndex: 'alarmType',
       key: 'alarmType',
       width: 100,
-      render: (type: AlarmRecord['alarmType']) => getAlarmTypeText(type)
+      render: (type) => getAlarmTypeText(type)
     },
     {
       title: '级别',
       dataIndex: 'alarmLevel',
       key: 'alarmLevel',
       width: 80,
-      render: (level: AlarmRecord['alarmLevel']) => (
+      render: (level) => (
         <Tag color={getAlarmLevelColor(level)} icon={<ExclamationCircleOutlined />}>
           {getAlarmLevelText(level)}
         </Tag>
@@ -486,7 +487,7 @@ export default function TemperatureMonitor() {
       dataIndex: 'status',
       key: 'status',
       width: 100,
-      render: (status: AlarmRecord['status']) => (
+      render: (status) => (
         <Tag color={getAlarmStatusColor(status)}>
           {getAlarmStatusText(status)}
         </Tag>
@@ -497,13 +498,13 @@ export default function TemperatureMonitor() {
       dataIndex: 'handler',
       key: 'handler',
       width: 100,
-      render: (text: string) => text || '-'
+      render: (text) => text || '-'
     },
     {
       title: '操作',
       key: 'action',
       width: 150,
-      render: (_: any, record: AlarmRecord) => (
+      render: (_, record) => (
         <Space>
           <Tooltip title="查看详情">
             <Button

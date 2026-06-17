@@ -15,6 +15,7 @@ import dayjs from 'dayjs'
 import { useAppStore } from '@/store'
 import { generateTempRecords } from '@/mock/data'
 import type { TransportRecord, TemperatureRecord, VaccineBatch } from '@/types'
+import type { ColumnsType } from 'antd/es/table'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -100,7 +101,7 @@ const getTemperatureChartOption = (records: TemperatureRecord[], vehicleNo: stri
     },
     tooltip: {
       trigger: 'axis',
-      formatter: (params: any) => {
+      formatter: (params: any[]) => {
         const data = params[0]
         const temp = data.value
         let status = '正常'
@@ -398,7 +399,7 @@ export default function ColdChainTransport() {
     })
   }
 
-  const registerColumns = [
+  const registerColumns: ColumnsType<TransportRecord> = [
     {
       title: '车牌号',
       dataIndex: 'vehicleNo',
@@ -433,7 +434,7 @@ export default function ColdChainTransport() {
       title: '运输疫苗',
       key: 'vaccines',
       width: 200,
-      render: (_, record: TransportRecord) => (
+      render: (_val, record) => (
         <Tooltip title={record.vaccines.map(v => `${v.vaccineName} (${v.batchNo}) x${v.quantity}`).join('\n')}>
           <Text ellipsis style={{ maxWidth: 180 }}>
             {record.vaccines.map(v => v.vaccineName).join('、')}
@@ -456,7 +457,7 @@ export default function ColdChainTransport() {
       title: '操作',
       key: 'action',
       width: 180,
-      render: (_, record: TransportRecord) => (
+      render: (_val, record) => (
         <Space size="small">
           <Button
             type="link"
@@ -499,14 +500,111 @@ export default function ColdChainTransport() {
     },
   ]
 
-  const historyColumns = [
-    ...registerColumns,
+  const historyColumns: ColumnsType<TransportRecord> = [
+    {
+      title: '车牌号',
+      dataIndex: 'vehicleNo',
+      key: 'vehicleNo',
+      width: 120,
+    },
+    {
+      title: '司机',
+      dataIndex: 'driver',
+      key: 'driver',
+      width: 100,
+    },
+    {
+      title: '出发时间',
+      dataIndex: 'startTime',
+      key: 'startTime',
+      width: 160,
+    },
     {
       title: '到达时间',
       dataIndex: 'endTime',
       key: 'endTime',
       width: 160,
       render: (val?: string) => val || '-',
+    },
+    {
+      title: '出发地',
+      dataIndex: 'startLocation',
+      key: 'startLocation',
+      width: 150,
+    },
+    {
+      title: '目的地',
+      dataIndex: 'endLocation',
+      key: 'endLocation',
+      width: 150,
+    },
+    {
+      title: '运输疫苗',
+      key: 'vaccines',
+      width: 200,
+      render: (_val, record) => (
+        <Tooltip title={record.vaccines.map(v => `${v.vaccineName} (${v.batchNo}) x${v.quantity}`).join('\n')}>
+          <Text ellipsis style={{ maxWidth: 180 }}>
+            {record.vaccines.map(v => v.vaccineName).join('、')}
+          </Text>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (status: TransportRecord['status']) => (
+        <Tag color={getStatusColor(status)} icon={getStatusIcon(status)}>
+          {getStatusText(status)}
+        </Tag>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_val, record) => (
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => viewRecordDetail(record)}
+          >
+            详情
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<DashboardOutlined />}
+            onClick={() => handleViewTempChart(record)}
+          >
+            温度曲线
+          </Button>
+          {record.status === 'transporting' && (
+            <>
+              <Button
+                type="link"
+                size="small"
+                onClick={() => handleCompleteTransport(record)}
+                style={{ color: '#52c41a' }}
+              >
+                完成
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                danger
+                onClick={() => handleAbnormalTransport(record)}
+              >
+                异常
+              </Button>
+            </>
+          )}
+        </Space>
+      ),
     },
   ]
 
@@ -640,12 +738,12 @@ export default function ColdChainTransport() {
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                           {record.vaccines.slice(0, 2).map((v, idx) => (
-                            <Tag key={idx} size="small" color="blue">
+                            <Tag key={idx} color="blue" style={{ fontSize: 12 }}>
                               {v.vaccineName}
                             </Tag>
                           ))}
                           {record.vaccines.length > 2 && (
-                            <Tag size="small">+{record.vaccines.length - 2}</Tag>
+                            <Tag style={{ fontSize: 12 }}>+{record.vaccines.length - 2}</Tag>
                           )}
                         </div>
                       </div>
@@ -915,7 +1013,7 @@ export default function ColdChainTransport() {
                 <Col span={6}>
                   <Statistic
                     title="当前温度"
-                    value={getCurrentTemp(selectedRecord.temperatureRecords)}
+                    value={getCurrentTemp(selectedRecord.temperatureRecords) ?? '-'}
                     suffix="℃"
                     valueStyle={{
                       fontSize: '16px',

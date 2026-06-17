@@ -10,6 +10,8 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useAppStore } from '@/store'
+import type { ColumnsType } from 'antd/es/table'
+import type { InputRef } from 'antd/es/input/Input'
 import type { DistributionRecord, TraceCodeRecord } from '@/types'
 
 const { Option } = Select
@@ -64,7 +66,7 @@ export default function VaccinationDistribution() {
   const [traceCodeInput, setTraceCodeInput] = useState('')
   const [selectedRecord, setSelectedRecord] = useState<DistributionRecord | null>(null)
   const [selectedTraceCode, setSelectedTraceCode] = useState<string>('')
-  const scanInputRef = useRef<any>(null)
+  const scanInputRef = useRef<InputRef>(null)
 
   const {
     distributionRecords,
@@ -412,7 +414,7 @@ export default function VaccinationDistribution() {
     })
   }
 
-  const distributionColumns = [
+  const distributionColumns: ColumnsType<DistributionRecord> = [
     {
       title: '疫苗名称',
       dataIndex: 'vaccineName',
@@ -430,7 +432,7 @@ export default function VaccinationDistribution() {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 80,
-      render: (val: number) => `${val} 支`,
+      render: (val) => `${val} 支`,
     },
     {
       title: '接种门诊',
@@ -455,7 +457,7 @@ export default function VaccinationDistribution() {
       dataIndex: 'receiveStatus',
       key: 'receiveStatus',
       width: 100,
-      render: (val: string) => (
+      render: (val) => (
         <Tag color={statusColorMap[val]}>
           {statusTextMap[val]}
         </Tag>
@@ -465,7 +467,7 @@ export default function VaccinationDistribution() {
       title: '操作',
       key: 'action',
       width: 120,
-      render: (_, record: DistributionRecord) => (
+      render: (_, record) => (
         <Space>
           <Button
             type="link"
@@ -479,7 +481,7 @@ export default function VaccinationDistribution() {
     },
   ]
 
-  const pendingColumns = [
+  const pendingColumns: ColumnsType<DistributionRecord> = [
     {
       title: '疫苗名称',
       dataIndex: 'vaccineName',
@@ -497,7 +499,7 @@ export default function VaccinationDistribution() {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 80,
-      render: (val: number) => `${val} 支`,
+      render: (val) => `${val} 支`,
     },
     {
       title: '接种门诊',
@@ -532,7 +534,7 @@ export default function VaccinationDistribution() {
       title: '操作',
       key: 'action',
       width: 120,
-      render: (_, record: DistributionRecord) => (
+      render: (_, record) => (
         <Space>
           <Button
             type="primary"
@@ -547,7 +549,7 @@ export default function VaccinationDistribution() {
     },
   ]
 
-  const receivedColumns = [
+  const receivedColumns: ColumnsType<DistributionRecord> = [
     {
       title: '疫苗名称',
       dataIndex: 'vaccineName',
@@ -565,7 +567,7 @@ export default function VaccinationDistribution() {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 80,
-      render: (val: number) => `${val} 支`,
+      render: (val) => `${val} 支`,
     },
     {
       title: '接种门诊',
@@ -600,7 +602,7 @@ export default function VaccinationDistribution() {
       title: '操作',
       key: 'action',
       width: 120,
-      render: (_, record: DistributionRecord) => (
+      render: (_, record) => (
         <Space>
           <Button
             type="link"

@@ -15,6 +15,7 @@ import {
 import ReactECharts from 'echarts-for-react'
 import { useAppStore } from '@/store'
 import type { AlarmRecord, ColdStorage } from '@/types'
+import type { ColumnsType } from 'antd/es/table'
 
 const { Title } = Typography
 
@@ -183,7 +184,7 @@ export default function Dashboard() {
     }
   }, [vaccineBatches])
 
-  const alarmColumns = [
+  const alarmColumns: ColumnsType<AlarmRecord> = [
     {
       title: '设备名称',
       dataIndex: 'deviceName',
