@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import {
   Tabs, Table, Button, Form, Input, Select, DatePicker,
   Space, message, Tag, Timeline, Card, Descriptions, Row, Col,
-  Statistic, List, Divider, Empty
+  Statistic, List, Divider, Empty, Collapse, Typography
 } from 'antd'
 import type { InputRef } from 'antd/es/input/Input'
 import {
@@ -10,18 +10,35 @@ import {
   WarningOutlined, BarChartOutlined, PieChartOutlined,
   LineChartOutlined, UserOutlined, InboxOutlined,
   EnvironmentOutlined, MedicineBoxOutlined,
-  CalendarOutlined, TeamOutlined, ShopOutlined
+  CalendarOutlined, TeamOutlined, ShopOutlined,
+  ApartmentOutlined, SendOutlined, TruckOutlined,
+  CheckCircleOutlined, ScissorOutlined, DashboardOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import { useAppStore } from '@/store'
-import type { TraceCodeRecord, ChainBreakEvent, VaccinationStats } from '@/types'
+import type {
+  TraceCodeRecord, ChainBreakEvent, VaccinationStats,
+  VaccineBatch, StockRecord, TransportRecord, DistributionRecord
+} from '@/types'
 import type { ColumnsType } from 'antd/es/table'
 
 const { Option } = Select
 const { RangePicker } = DatePicker
+const { Text } = Typography
 
-type TabKey = 'traceCodeQuery' | 'chainBreakEvent' | 'vaccinationStats'
+type TabKey = 'traceCodeQuery' | 'batchTrace' | 'chainBreakEvent' | 'vaccinationStats'
+
+type TraceLinkType = 'stockIn' | 'stockOut' | 'transport' | 'distribution' | 'receive' | 'scan' | 'chainBreak'
+
+interface TraceLinkItem {
+  key: string
+  type: TraceLinkType
+  time: string
+  title: string
+  description: string
+  detail: any
+}
 
 const traceStatusTextMap: Record<string, string> = {
   inStock: '在库',
@@ -75,13 +92,42 @@ const scanActionColorMap: Record<string, string> = {
   '接种': 'green'
 }
 
+const batchStatusTextMap: Record<string, string> = {
+  normal: '正常',
+  nearExpire: '临近效期',
+  expired: '已过期',
+  destroyed: '已销毁'
+}
+
+const batchStatusColorMap: Record<string, string> = {
+  normal: 'green',
+  nearExpire: 'orange',
+  expired: 'red',
+  destroyed: 'default'
+}
+
+const linkTypeConfig: Record<TraceLinkType, { label: string; color: string; icon: React.ReactNode }> = {
+  stockIn: { label: '入库', color: 'blue', icon: <InboxOutlined /> },
+  stockOut: { label: '出库', color: 'orange', icon: <SendOutlined /> },
+  transport: { label: '运输', color: 'cyan', icon: <TruckOutlined /> },
+  distribution: { label: '分发', color: 'purple', icon: <MedicineBoxOutlined /> },
+  receive: { label: '接收', color: 'green', icon: <CheckCircleOutlined /> },
+  scan: { label: '扫码', color: 'blue', icon: <QrcodeOutlined /> },
+  chainBreak: { label: '断链事件', color: 'red', icon: <WarningOutlined /> }
+}
+
 export default function TraceStatistics() {
   const [activeTab, setActiveTab] = useState<TabKey>('traceCodeQuery')
   const [traceCodeInput, setTraceCodeInput] = useState('')
   const [selectedEvent, setSelectedEvent] = useState<ChainBreakEvent | null>(null)
+  const [selectedBatch, setSelectedBatch] = useState<VaccineBatch | null>(null)
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const [vaccineFilter, setVaccineFilter] = useState('')
   const [clinicFilter, setClinicFilter] = useState('')
+  const [batchTraceVaccineFilter, setBatchTraceVaccineFilter] = useState('')
+  const [batchTraceBatchNoFilter, setBatchTraceBatchNoFilter] = useState('')
+  const [batchTraceStatusFilter, setBatchTraceStatusFilter] = useState('')
+  const [batchTraceDateRange, setBatchTraceDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const scanInputRef = useRef<InputRef>(null)
 
   const {
@@ -91,7 +137,10 @@ export default function TraceStatistics() {
     vaccineBatches,
     vaccines,
     clinics,
-    temperatureRecords
+    temperatureRecords,
+    stockRecords,
+    transportRecords,
+    distributionRecords
   } = useAppStore()
 
   useEffect(() => {
@@ -112,9 +161,14 @@ export default function TraceStatistics() {
   }, [chainBreakEvents])
 
   const vaccineOptions = useMemo(() => {
-    const vaccines = [...new Set(vaccinationStats.map(s => s.vaccineName))]
-    return vaccines.map(v => ({ label: v, value: v }))
+    const names = [...new Set(vaccinationStats.map(s => s.vaccineName))]
+    return names.map(v => ({ label: v, value: v }))
   }, [vaccinationStats])
+
+  const batchVaccineOptions = useMemo(() => {
+    const names = [...new Set(vaccineBatches.map(b => b.vaccineName))]
+    return names.map(v => ({ label: v, value: v }))
+  }, [vaccineBatches])
 
   const clinicOptions = useMemo(() => {
     return clinics.map(c => ({ label: c.name, value: c.name }))
@@ -138,6 +192,19 @@ export default function TraceStatistics() {
     }).sort((a, b) => dayjs(b.date).valueOf() - dayjs(a.date).valueOf())
   }, [vaccinationStats, dateRange, vaccineFilter, clinicFilter])
 
+  const filteredBatches = useMemo(() => {
+    return vaccineBatches.filter(b => {
+      if (batchTraceVaccineFilter && b.vaccineName !== batchTraceVaccineFilter) return false
+      if (batchTraceBatchNoFilter && !b.batchNo.includes(batchTraceBatchNoFilter)) return false
+      if (batchTraceStatusFilter && b.status !== batchTraceStatusFilter) return false
+      if (batchTraceDateRange) {
+        const ct = dayjs(b.createTime)
+        if (ct.isBefore(batchTraceDateRange[0]) || ct.isAfter(batchTraceDateRange[1])) return false
+      }
+      return true
+    })
+  }, [vaccineBatches, batchTraceVaccineFilter, batchTraceBatchNoFilter, batchTraceStatusFilter, batchTraceDateRange])
+
   const statCards = useMemo(() => {
     const today = dayjs().format('YYYY-MM-DD')
     const totalDoses = filteredStats.reduce((sum, s) => sum + s.doses, 0)
@@ -151,6 +218,139 @@ export default function TraceStatistics() {
 
     return { totalDoses, todayDoses, avgCoverage, clinicCount }
   }, [filteredStats])
+
+  const getBatchInfo = (batchId: string) => {
+    const batch = vaccineBatches.find(b => b.id === batchId)
+    if (!batch) return null
+    const vaccine = vaccines.find(v => v.id === batch.vaccineId)
+    return {
+      ...batch,
+      manufacturer: vaccine?.manufacturer || '-'
+    }
+  }
+
+  const getBatchTraceLinks = (batchId: string): TraceLinkItem[] => {
+    const links: TraceLinkItem[] = []
+    const batch = vaccineBatches.find(b => b.id === batchId)
+    if (!batch) return links
+
+    stockRecords
+      .filter(s => s.batchId === batchId)
+      .forEach(s => {
+        links.push({
+          key: `stock-${s.id}`,
+          type: s.type === 'in' ? 'stockIn' : 'stockOut',
+          time: s.operateTime,
+          title: s.type === 'in' ? `入库 +${s.quantity}${batch.unit}` : `出库 -${s.quantity}${batch.unit}`,
+          description: s.type === 'in'
+            ? `来源：${s.source || '-'}，验收：${s.acceptanceResult === 'passed' ? '通过' : '不通过'}`
+            : `去向：${s.target || '-'}`,
+          detail: s
+        })
+      })
+
+    transportRecords
+      .filter(t => t.vaccines.some(v => v.batchId === batchId))
+      .forEach(t => {
+        const v = t.vaccines.find(vv => vv.batchId === batchId)
+        links.push({
+          key: `transport-${t.id}`,
+          type: 'transport',
+          time: t.startTime,
+          title: `${t.vehicleNo} 运输 ${v?.quantity || 0}${batch.unit}`,
+          description: `${t.startLocation} → ${t.endLocation}，司机：${t.driver}，状态：${t.status === 'transporting' ? '运输中' : t.status === 'completed' ? '已完成' : '异常'}`,
+          detail: t
+        })
+      })
+
+    distributionRecords
+      .filter(d => d.batchId === batchId)
+      .forEach(d => {
+        links.push({
+          key: `dist-${d.id}`,
+          type: 'distribution',
+          time: d.distributeTime,
+          title: `分发 ${d.quantity}${batch.unit} 至 ${d.clinicName}`,
+          description: `分发人：${d.distributor}，状态：${d.receiveStatus === 'received' ? '已接收' : '待接收'}${d.receiveTime ? `，接收时间：${d.receiveTime}` : ''}`,
+          detail: d
+        })
+        if (d.receiveStatus === 'received' && d.receiveTime) {
+          links.push({
+            key: `recv-${d.id}`,
+            type: 'receive',
+            time: d.receiveTime,
+            title: `${d.clinicName} 已接收`,
+            description: `接收人：${d.receiver || '-'}`,
+            detail: d
+          })
+        }
+      })
+
+    traceCodeRecords
+      .filter(t => t.batchId === batchId)
+      .flatMap(t => t.scanHistory.map(h => ({ record: t, history: h })))
+      .forEach(({ record, history }) => {
+        links.push({
+          key: `scan-${record.id}-${history.time}`,
+          type: 'scan',
+          time: history.time,
+          title: `${history.action} [${record.traceCode}]`,
+          description: `地点：${history.location}，操作员：${history.operator}`,
+          detail: { record, history }
+        })
+      })
+
+    chainBreakEvents
+      .filter(e => e.affectedBatches.includes(batchId))
+      .forEach(e => {
+        links.push({
+          key: `event-${e.id}`,
+          type: 'chainBreak',
+          time: e.startTime,
+          title: `${eventTypeTextMap[e.eventType]}`,
+          description: `${e.description}，状态：${eventStatusTextMap[e.status]}`,
+          detail: e
+        })
+      })
+
+    return links.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
+  }
+
+  const getBatchTransportRecords = (batchId: string) => {
+    return transportRecords.filter(t => t.vaccines.some(v => v.batchId === batchId))
+  }
+
+  const getBatchTempChartOption = (batchId: string) => {
+    const transports = getBatchTransportRecords(batchId)
+    const allTemps = transports.flatMap(t => t.temperatureRecords)
+      .sort((a, b) => dayjs(a.recordTime).valueOf() - dayjs(b.recordTime).valueOf())
+
+    return {
+      tooltip: { trigger: 'axis' },
+      xAxis: {
+        type: 'category',
+        data: allTemps.map(t => t.recordTime.slice(5, 16)),
+        axisLabel: { fontSize: 10, rotate: 30 }
+      },
+      yAxis: { type: 'value', name: '温度(℃)', min: 0, max: 15 },
+      series: [{
+        data: allTemps.map(t => t.temperature),
+        type: 'line',
+        smooth: true,
+        lineStyle: { color: '#1890ff', width: 2 },
+        itemStyle: { color: '#1890ff' },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          data: [
+            { yAxis: 2, lineStyle: { color: '#52c41a', type: 'dashed' }, label: { formatter: '2℃', fontSize: 10, color: '#52c41a' } },
+            { yAxis: 8, lineStyle: { color: '#52c41a', type: 'dashed' }, label: { formatter: '8℃', fontSize: 10, color: '#52c41a' } }
+          ]
+        }
+      }],
+      grid: { left: 50, right: 20, top: 30, bottom: 50 }
+    }
+  }
 
   const trendChartOption = useMemo(() => {
     const last7Days = Array.from({ length: 7 }, (_, i) =>
@@ -309,125 +509,88 @@ export default function TraceStatistics() {
     }
   }
 
-  const getBatchInfo = (batchId: string) => {
-    const batch = vaccineBatches.find(b => b.id === batchId)
-    if (!batch) return null
-    const vaccine = vaccines.find(v => v.id === batch.vaccineId)
-    return {
-      ...batch,
-      manufacturer: vaccine?.manufacturer || '-'
-    }
-  }
-
   const traceCodeColumns: ColumnsType<{time: string; location: string; operator: string; action: string}> = [
+    { title: '扫描时间', dataIndex: 'time', key: 'time', width: 160 },
     {
-      title: '扫描时间',
-      dataIndex: 'time',
-      key: 'time',
-      width: 160,
-    },
-    {
-      title: '地点',
-      dataIndex: 'location',
-      key: 'location',
-      width: 200,
+      title: '地点', dataIndex: 'location', key: 'location', width: 200,
       render: (val: string) => (
-        <Space>
-          <EnvironmentOutlined />
-          {val}
-        </Space>
+        <Space><EnvironmentOutlined />{val}</Space>
       )
     },
     {
-      title: '操作员',
-      dataIndex: 'operator',
-      key: 'operator',
-      width: 100,
+      title: '操作员', dataIndex: 'operator', key: 'operator', width: 100,
       render: (val: string) => (
-        <Space>
-          <UserOutlined />
-          {val}
-        </Space>
+        <Space><UserOutlined />{val}</Space>
       )
     },
     {
-      title: '操作',
-      dataIndex: 'action',
-      key: 'action',
-      width: 120,
-      render: (val: string) => (
-        <Tag color={scanActionColorMap[val] || 'blue'}>{val}</Tag>
+      title: '操作', dataIndex: 'action', key: 'action', width: 120,
+      render: (val: string) => <Tag color={scanActionColorMap[val] || 'blue'}>{val}</Tag>
+    }
+  ]
+
+  const batchListColumns: ColumnsType<VaccineBatch> = [
+    {
+      title: '疫苗名称', dataIndex: 'vaccineName', key: 'vaccineName', width: 160,
+      render: (val) => (
+        <Space><MedicineBoxOutlined />{val}</Space>
+      )
+    },
+    { title: '批号', dataIndex: 'batchNo', key: 'batchNo', width: 130 },
+    {
+      title: '库存数量', key: 'stockQty', width: 120,
+      render: (_, r) => `${r.quantity}${r.unit}`
+    },
+    {
+      title: '运输中', key: 'transitQty', width: 100,
+      render: (_, r) => r.inTransitQuantity ? (
+        <Tag color="cyan">{r.inTransitQuantity}{r.unit}</Tag>
+      ) : <span style={{ color: '#999' }}>0{r.unit}</span>
+    },
+    {
+      title: '状态', dataIndex: 'status', key: 'status', width: 100,
+      render: (val) => <Tag color={batchStatusColorMap[val]}>{batchStatusTextMap[val]}</Tag>
+    },
+    { title: '生产日期', dataIndex: 'produceDate', key: 'produceDate', width: 110 },
+    { title: '有效期', dataIndex: 'expireDate', key: 'expireDate', width: 110 },
+    {
+      title: '操作', key: 'action', width: 120,
+      render: (_, r) => (
+        <Button
+          type="link"
+          icon={<ApartmentOutlined />}
+          onClick={() => setSelectedBatch(r)}
+        >
+          追溯链路
+        </Button>
       )
     }
   ]
 
   const statsColumns: ColumnsType<VaccinationStats> = [
     {
-      title: '日期',
-      dataIndex: 'date',
-      key: 'date',
-      width: 110,
-      render: (val: string) => (
-        <Space>
-          <CalendarOutlined />
-          {val}
-        </Space>
-      )
+      title: '日期', dataIndex: 'date', key: 'date', width: 110,
+      render: (val: string) => (<Space><CalendarOutlined />{val}</Space>)
     },
     {
-      title: '疫苗名称',
-      dataIndex: 'vaccineName',
-      key: 'vaccineName',
-      width: 150,
-      render: (val: string) => (
-        <Space>
-          <MedicineBoxOutlined />
-          {val}
-        </Space>
-      )
+      title: '疫苗名称', dataIndex: 'vaccineName', key: 'vaccineName', width: 150,
+      render: (val: string) => (<Space><MedicineBoxOutlined />{val}</Space>)
+    },
+    { title: '批号', dataIndex: 'batchNo', key: 'batchNo', width: 130 },
+    {
+      title: '接种门诊', dataIndex: 'clinicName', key: 'clinicName', width: 200,
+      render: (val: string) => (<Space><ShopOutlined />{val}</Space>)
     },
     {
-      title: '批号',
-      dataIndex: 'batchNo',
-      key: 'batchNo',
-      width: 130,
-    },
-    {
-      title: '接种门诊',
-      dataIndex: 'clinicName',
-      key: 'clinicName',
-      width: 200,
-      render: (val: string) => (
-        <Space>
-          <ShopOutlined />
-          {val}
-        </Space>
-      )
-    },
-    {
-      title: '接种剂次',
-      dataIndex: 'doses',
-      key: 'doses',
-      width: 100,
+      title: '接种剂次', dataIndex: 'doses', key: 'doses', width: 100,
       render: (val: number) => <Tag color="blue">{val} 剂次</Tag>
     },
     {
-      title: '目标人群',
-      dataIndex: 'population',
-      key: 'population',
-      width: 120,
-      render: (val: string) => (
-        <Space>
-          <TeamOutlined />
-          {val}
-        </Space>
-      )
+      title: '目标人群', dataIndex: 'population', key: 'population', width: 120,
+      render: (val: string) => (<Space><TeamOutlined />{val}</Space>)
     },
     {
-      title: '覆盖率',
-      dataIndex: 'coverageRate',
-      key: 'coverageRate',
-      width: 100,
+      title: '覆盖率', dataIndex: 'coverageRate', key: 'coverageRate', width: 100,
       render: (val: number) => {
         let color = 'green'
         if (val < 80) color = 'red'
@@ -436,6 +599,81 @@ export default function TraceStatistics() {
       }
     }
   ]
+
+  const renderChainBreakBatchDetail = () => {
+    if (!selectedEvent || selectedEvent.affectedBatches.length === 0) return null
+    return (
+      <Collapse
+        defaultActiveKey={selectedEvent.affectedBatches.map((_, i) => String(i))}
+        style={{ marginTop: 16 }}
+      >
+        {selectedEvent.affectedBatches.map((batchId, idx) => {
+          const info = getBatchInfo(batchId)
+          const transportList = getBatchTransportRecords(batchId)
+          return (
+            <Collapse.Panel
+              key={String(idx)}
+              header={
+                <Space>
+                  <MedicineBoxOutlined style={{ color: '#1890ff' }} />
+                  <Text strong>{info ? `${info.vaccineName} - ${info.batchNo}` : batchId}</Text>
+                  {info && (
+                    <Tag color={batchStatusColorMap[info.status]}>
+                      {batchStatusTextMap[info.status]}
+                    </Tag>
+                  )}
+                </Space>
+              }
+            >
+              {info ? (
+                <div>
+                  <Descriptions column={2} size="small" bordered>
+                    <Descriptions.Item label="疫苗名称">{info.vaccineName}</Descriptions.Item>
+                    <Descriptions.Item label="批号">{info.batchNo}</Descriptions.Item>
+                    <Descriptions.Item label="生产厂家">{info.manufacturer}</Descriptions.Item>
+                    <Descriptions.Item label="有效期">{info.expireDate}</Descriptions.Item>
+                    <Descriptions.Item label="在库数量">{info.quantity}{info.unit}</Descriptions.Item>
+                    <Descriptions.Item label="运输中">
+                      {info.inTransitQuantity ? `${info.inTransitQuantity}${info.unit}` : `0${info.unit}`}
+                    </Descriptions.Item>
+                  </Descriptions>
+                  {transportList.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                        <DashboardOutlined /> 关联运输温度曲线
+                      </div>
+                      <ReactECharts option={getBatchTempChartOption(batchId)} style={{ height: 200 }} />
+                      <List
+                        size="small"
+                        style={{ marginTop: 8 }}
+                        header={<div style={{ fontSize: 12, color: '#888' }}>关联运输记录：</div>}
+                        dataSource={transportList}
+                        renderItem={tr => (
+                          <List.Item>
+                            <Space>
+                              <TruckOutlined />
+                              <span>{tr.vehicleNo}</span>
+                              <Tag>{tr.startLocation} → {tr.endLocation}</Tag>
+                              <Tag color={tr.status === 'transporting' ? 'processing' : tr.status === 'completed' ? 'success' : 'error'}>
+                                {tr.status === 'transporting' ? '运输中' : tr.status === 'completed' ? '已完成' : '异常'}
+                              </Tag>
+                              <span style={{ color: '#999', fontSize: 12 }}>{tr.startTime}</span>
+                            </Space>
+                          </List.Item>
+                        )}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ color: '#999' }}>未找到批次信息</div>
+              )}
+            </Collapse.Panel>
+          )
+        })}
+      </Collapse>
+    )
+  }
 
   const tabItems = [
     {
@@ -566,6 +804,168 @@ export default function TraceStatistics() {
       ),
     },
     {
+      key: 'batchTrace',
+      label: (
+        <Space>
+          <ApartmentOutlined />
+          批次追溯
+        </Space>
+      ),
+      children: (
+        <div>
+          <Card
+            title="筛选条件"
+            size="small"
+            style={{ marginBottom: 16 }}
+            extra={
+              <Button
+                onClick={() => {
+                  setBatchTraceVaccineFilter('')
+                  setBatchTraceBatchNoFilter('')
+                  setBatchTraceStatusFilter('')
+                  setBatchTraceDateRange(null)
+                  setSelectedBatch(null)
+                }}
+              >
+                重置
+              </Button>
+            }
+          >
+            <Space wrap>
+              <Select
+                placeholder="疫苗名称"
+                style={{ width: 200 }}
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                value={batchTraceVaccineFilter || undefined}
+                onChange={setBatchTraceVaccineFilter}
+              >
+                {batchVaccineOptions.map(opt => (
+                  <Option key={opt.value} value={opt.value} label={opt.label}>{opt.label}</Option>
+                ))}
+              </Select>
+              <Input
+                placeholder="批号搜索"
+                prefix={<SearchOutlined />}
+                style={{ width: 180 }}
+                allowClear
+                value={batchTraceBatchNoFilter}
+                onChange={(e) => setBatchTraceBatchNoFilter(e.target.value)}
+              />
+              <Select
+                placeholder="库存状态"
+                style={{ width: 150 }}
+                allowClear
+                value={batchTraceStatusFilter || undefined}
+                onChange={setBatchTraceStatusFilter}
+              >
+                <Option value="normal">正常</Option>
+                <Option value="nearExpire">临近效期</Option>
+                <Option value="expired">已过期</Option>
+                <Option value="destroyed">已销毁</Option>
+              </Select>
+              <RangePicker
+                value={batchTraceDateRange}
+                onChange={(dates) => setBatchTraceDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
+                placeholder={['创建开始', '创建结束']}
+              />
+              <Tag color="blue">{filteredBatches.length} 条批次</Tag>
+            </Space>
+          </Card>
+
+          <Row gutter={16}>
+            <Col span={selectedBatch ? 10 : 24}>
+              <Card title="批次列表">
+                <Table
+                  columns={batchListColumns}
+                  dataSource={filteredBatches}
+                  rowKey="id"
+                  pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+                  scroll={{ x: 1000 }}
+                  rowClassName={(r) => selectedBatch?.id === r.id ? 'table-row-selected' : ''}
+                  onRow={(r) => ({
+                    style: { cursor: 'pointer', background: selectedBatch?.id === r.id ? '#e6f7ff' : undefined },
+                    onClick: () => setSelectedBatch(r)
+                  })}
+                />
+              </Card>
+            </Col>
+            <Col span={selectedBatch ? 14 : 0} style={{ display: selectedBatch ? undefined : 'none' }}>
+              {selectedBatch && (
+                <Card
+                  title={
+                    <Space>
+                      <ApartmentOutlined />
+                      {selectedBatch.vaccineName} - {selectedBatch.batchNo}
+                      <Tag color={batchStatusColorMap[selectedBatch.status]}>
+                        {batchStatusTextMap[selectedBatch.status]}
+                      </Tag>
+                    </Space>
+                  }
+                  extra={
+                    <Button type="text" size="small" onClick={() => setSelectedBatch(null)}>关闭</Button>
+                  }
+                >
+                  <Descriptions column={2} size="small" bordered style={{ marginBottom: 16 }}>
+                    <Descriptions.Item label="疫苗名称">{selectedBatch.vaccineName}</Descriptions.Item>
+                    <Descriptions.Item label="批号">{selectedBatch.batchNo}</Descriptions.Item>
+                    <Descriptions.Item label="生产厂家">{getBatchInfo(selectedBatch.id)?.manufacturer || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="有效期">{selectedBatch.expireDate}</Descriptions.Item>
+                    <Descriptions.Item label="在库数量">{selectedBatch.quantity}{selectedBatch.unit}</Descriptions.Item>
+                    <Descriptions.Item label="运输中">
+                      {selectedBatch.inTransitQuantity ? `${selectedBatch.inTransitQuantity}${selectedBatch.unit}` : `0${selectedBatch.unit}`}
+                    </Descriptions.Item>
+                  </Descriptions>
+
+                  {getBatchTransportRecords(selectedBatch.id).length > 0 && (
+                    <Card
+                      size="small"
+                      title={<Space><DashboardOutlined />运输温度曲线</Space>}
+                      style={{ marginBottom: 16 }}
+                    >
+                      <ReactECharts option={getBatchTempChartOption(selectedBatch.id)} style={{ height: 220 }} />
+                    </Card>
+                  )}
+
+                  <Card
+                    size="small"
+                    title={<Space><ClockCircleOutlined />完整追溯链路 ({getBatchTraceLinks(selectedBatch.id).length} 条)</Space>}
+                  >
+                    {getBatchTraceLinks(selectedBatch.id).length > 0 ? (
+                      <Timeline
+                        mode="left"
+                        items={getBatchTraceLinks(selectedBatch.id).map(link => {
+                          const cfg = linkTypeConfig[link.type]
+                          return {
+                            color: cfg.color,
+                            label: link.time,
+                            children: (
+                              <div>
+                                <p style={{ margin: 0 }}>
+                                  <Tag color={cfg.color}>{cfg.icon} {cfg.label}</Tag>
+                                  <Text strong style={{ marginLeft: 8 }}>{link.title}</Text>
+                                </p>
+                                <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>
+                                  {link.description}
+                                </p>
+                              </div>
+                            )
+                          }
+                        })}
+                      />
+                    ) : (
+                      <Empty description="暂无链路数据" style={{ padding: 20 }} />
+                    )}
+                  </Card>
+                </Card>
+              )}
+            </Col>
+          </Row>
+        </div>
+      ),
+    },
+    {
       key: 'chainBreakEvent',
       label: (
         <Space>
@@ -634,39 +1034,27 @@ export default function TraceStatistics() {
                 <div>
                   <Card title="事件详情">
                     <Descriptions bordered column={2} size="small">
-                      <Descriptions.Item label="事件编号">
-                        {selectedEvent.id}
-                      </Descriptions.Item>
+                      <Descriptions.Item label="事件编号">{selectedEvent.id}</Descriptions.Item>
                       <Descriptions.Item label="事件类型">
                         <Tag color={eventTypeColorMap[selectedEvent.eventType]}>
                           {eventTypeTextMap[selectedEvent.eventType]}
                         </Tag>
                       </Descriptions.Item>
                       <Descriptions.Item label="发生地点">
-                        <Space>
-                          <EnvironmentOutlined />
-                          {selectedEvent.location}
-                        </Space>
+                        <Space><EnvironmentOutlined />{selectedEvent.location}</Space>
                       </Descriptions.Item>
                       <Descriptions.Item label="当前状态">
                         <Tag color={eventStatusColorMap[selectedEvent.status]}>
                           {eventStatusTextMap[selectedEvent.status]}
                         </Tag>
                       </Descriptions.Item>
-                      <Descriptions.Item label="开始时间">
-                        {selectedEvent.startTime}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="结束时间">
-                        {selectedEvent.endTime || '-'}
-                      </Descriptions.Item>
+                      <Descriptions.Item label="开始时间">{selectedEvent.startTime}</Descriptions.Item>
+                      <Descriptions.Item label="结束时间">{selectedEvent.endTime || '-'}</Descriptions.Item>
                       <Descriptions.Item label="负责人">
-                        <Space>
-                          <UserOutlined />
-                          {selectedEvent.handler}
-                        </Space>
+                        <Space><UserOutlined />{selectedEvent.handler}</Space>
                       </Descriptions.Item>
                       <Descriptions.Item label="涉及批次">
-                        {selectedEvent.affectedBatches.join(', ')}
+                        {selectedEvent.affectedBatches.length} 个批次
                       </Descriptions.Item>
                       <Descriptions.Item label="事件描述" span={2}>
                         {selectedEvent.description}
@@ -680,30 +1068,17 @@ export default function TraceStatistics() {
                     </Card>
                   )}
 
-                  <Card title="涉及疫苗批次" style={{ marginTop: 16 }}>
-                    <List
-                      dataSource={selectedEvent.affectedBatches}
-                      renderItem={(batchId) => {
-                        const batch = getBatchInfo(batchId)
-                        return (
-                          <List.Item key={batchId}>
-                            <List.Item.Meta
-                              title={batch ? `${batch.vaccineName} - ${batch.batchNo}` : batchId}
-                              description={
-                                batch ? (
-                                  <Space>
-                                    <Tag>库存: {batch.quantity}{batch.unit}</Tag>
-                                    <Tag color={batch.status === 'normal' ? 'green' : batch.status === 'nearExpire' ? 'orange' : 'red'}>
-                                      {batch.status === 'normal' ? '正常' : batch.status === 'nearExpire' ? '临近效期' : batch.status === 'expired' ? '已过期' : '已销毁'}
-                                    </Tag>
-                                  </Space>
-                                ) : '未找到批次信息'
-                              }
-                            />
-                          </List.Item>
-                        )
-                      }}
-                    />
+                  <Card
+                    title={
+                      <Space>
+                        <ScissorOutlined />
+                        涉及疫苗批次详情
+                        <Tag color="blue">{selectedEvent.affectedBatches.length} 个批次</Tag>
+                      </Space>
+                    }
+                    style={{ marginTop: 16 }}
+                  >
+                    {renderChainBreakBatchDetail()}
                   </Card>
 
                   <Card title="处理时间线" style={{ marginTop: 16 }}>
@@ -715,15 +1090,9 @@ export default function TraceStatistics() {
                           label: selectedEvent.startTime,
                           children: (
                             <div>
-                              <p style={{ margin: 0 }}>
-                                <Tag color="red">事件发生</Tag>
-                              </p>
-                              <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>
-                                {selectedEvent.description}
-                              </p>
-                              <p style={{ margin: '2px 0 0 0', fontSize: 12, color: '#666' }}>
-                                地点：{selectedEvent.location}
-                              </p>
+                              <p style={{ margin: 0 }}><Tag color="red">事件发生</Tag></p>
+                              <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>{selectedEvent.description}</p>
+                              <p style={{ margin: '2px 0 0 0', fontSize: 12, color: '#666' }}>地点：{selectedEvent.location}</p>
                             </div>
                           )
                         },
@@ -733,13 +1102,9 @@ export default function TraceStatistics() {
                             label: selectedEvent.endTime,
                             children: (
                               <div>
-                                <p style={{ margin: 0 }}>
-                                  <Tag color="green">事件结束</Tag>
-                                </p>
+                                <p style={{ margin: 0 }}><Tag color="green">事件结束</Tag></p>
                                 {selectedEvent.result && (
-                                  <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>
-                                    处理结果：{selectedEvent.result}
-                                  </p>
+                                  <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>处理结果：{selectedEvent.result}</p>
                                 )}
                               </div>
                             )
@@ -752,9 +1117,7 @@ export default function TraceStatistics() {
                   {selectedEvent.result && (
                     <Card title="处理结果与评估报告" style={{ marginTop: 16 }}>
                       <Descriptions bordered column={1} size="small">
-                        <Descriptions.Item label="处理结果">
-                          {selectedEvent.result}
-                        </Descriptions.Item>
+                        <Descriptions.Item label="处理结果">{selectedEvent.result}</Descriptions.Item>
                         <Descriptions.Item label="评估结论">
                           该事件处理及时，未造成重大影响。涉及的疫苗批次已进行质量评估，
                           合格批次继续使用，不合格批次已按规定销毁。
@@ -788,12 +1151,7 @@ export default function TraceStatistics() {
             <Col span={6}>
               <Card>
                 <Statistic
-                  title={
-                    <Space>
-                      <MedicineBoxOutlined style={{ color: '#1890ff' }} />
-                      总接种剂次
-                    </Space>
-                  }
+                  title={<Space><MedicineBoxOutlined style={{ color: '#1890ff' }} />总接种剂次</Space>}
                   value={statCards.totalDoses}
                   suffix="剂次"
                   valueStyle={{ color: '#1890ff' }}
@@ -803,12 +1161,7 @@ export default function TraceStatistics() {
             <Col span={6}>
               <Card>
                 <Statistic
-                  title={
-                    <Space>
-                      <CalendarOutlined style={{ color: '#52c41a' }} />
-                      今日接种
-                    </Space>
-                  }
+                  title={<Space><CalendarOutlined style={{ color: '#52c41a' }} />今日接种</Space>}
                   value={statCards.todayDoses}
                   suffix="剂次"
                   valueStyle={{ color: '#52c41a' }}
@@ -818,12 +1171,7 @@ export default function TraceStatistics() {
             <Col span={6}>
               <Card>
                 <Statistic
-                  title={
-                    <Space>
-                      <LineChartOutlined style={{ color: '#faad14' }} />
-                      平均覆盖率
-                    </Space>
-                  }
+                  title={<Space><LineChartOutlined style={{ color: '#faad14' }} />平均覆盖率</Space>}
                   value={statCards.avgCoverage}
                   precision={1}
                   suffix="%"
@@ -834,12 +1182,7 @@ export default function TraceStatistics() {
             <Col span={6}>
               <Card>
                 <Statistic
-                  title={
-                    <Space>
-                      <ShopOutlined style={{ color: '#722ed1' }} />
-                      接种门诊数
-                    </Space>
-                  }
+                  title={<Space><ShopOutlined style={{ color: '#722ed1' }} />接种门诊数</Space>}
                   value={statCards.clinicCount}
                   suffix="家"
                   valueStyle={{ color: '#722ed1' }}
@@ -848,11 +1191,7 @@ export default function TraceStatistics() {
             </Col>
           </Row>
 
-          <Card
-            title="筛选条件"
-            style={{ marginBottom: 16 }}
-            size="small"
-          >
+          <Card title="筛选条件" style={{ marginBottom: 16 }} size="small">
             <Space wrap>
               <RangePicker
                 value={dateRange}
@@ -869,9 +1208,7 @@ export default function TraceStatistics() {
                 optionFilterProp="label"
               >
                 {vaccineOptions.map(opt => (
-                  <Option key={opt.value} value={opt.value} label={opt.label}>
-                    {opt.label}
-                  </Option>
+                  <Option key={opt.value} value={opt.value} label={opt.label}>{opt.label}</Option>
                 ))}
               </Select>
               <Select
@@ -884,45 +1221,21 @@ export default function TraceStatistics() {
                 optionFilterProp="label"
               >
                 {clinicOptions.map(opt => (
-                  <Option key={opt.value} value={opt.value} label={opt.label}>
-                    {opt.label}
-                  </Option>
+                  <Option key={opt.value} value={opt.value} label={opt.label}>{opt.label}</Option>
                 ))}
               </Select>
-              <Button
-                onClick={() => {
-                  setDateRange(null)
-                  setVaccineFilter('')
-                  setClinicFilter('')
-                }}
-              >
-                重置
-              </Button>
+              <Button onClick={() => { setDateRange(null); setVaccineFilter(''); setClinicFilter('') }}>重置</Button>
             </Space>
           </Card>
 
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={12}>
-              <Card
-                title={
-                  <Space>
-                    <LineChartOutlined />
-                    近7天接种趋势
-                  </Space>
-                }
-              >
+              <Card title={<Space><LineChartOutlined />近7天接种趋势</Space>}>
                 <ReactECharts option={trendChartOption} style={{ height: 280 }} />
               </Card>
             </Col>
             <Col span={12}>
-              <Card
-                title={
-                  <Space>
-                    <BarChartOutlined />
-                    各门诊接种数量对比
-                  </Space>
-                }
-              >
+              <Card title={<Space><BarChartOutlined />各门诊接种数量对比</Space>}>
                 <ReactECharts option={clinicChartOption} style={{ height: 280 }} />
               </Card>
             </Col>
@@ -930,14 +1243,7 @@ export default function TraceStatistics() {
 
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={10}>
-              <Card
-                title={
-                  <Space>
-                    <PieChartOutlined />
-                    各疫苗品种接种占比
-                  </Space>
-                }
-              >
+              <Card title={<Space><PieChartOutlined />各疫苗品种接种占比</Space>}>
                 <ReactECharts option={vaccineChartOption} style={{ height: 280 }} />
               </Card>
             </Col>
@@ -965,24 +1271,12 @@ export default function TraceStatistics() {
             </Col>
           </Row>
 
-          <Card
-            title={
-              <Space>
-                <BarChartOutlined />
-                接种统计明细
-                <Tag color="blue">{filteredStats.length} 条记录</Tag>
-              </Space>
-            }
-          >
+          <Card title={<Space><BarChartOutlined />接种统计明细<Tag color="blue">{filteredStats.length} 条记录</Tag></Space>}>
             <Table
               columns={statsColumns}
               dataSource={filteredStats}
               rowKey="id"
-              pagination={{
-                pageSize: 10,
-                showSizeChanger: true,
-                showTotal: (total) => `共 ${total} 条记录`,
-              }}
+              pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条记录` }}
               scroll={{ x: 1000 }}
             />
           </Card>

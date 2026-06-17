@@ -18,6 +18,7 @@ export interface VaccineBatch {
   expireDate: string
   quantity: number
   unit: string
+  inTransitQuantity?: number
   traceCodeStart: string
   traceCodeEnd: string
   status: 'normal' | 'nearExpire' | 'expired' | 'destroyed'

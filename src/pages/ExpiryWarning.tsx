@@ -1095,7 +1095,7 @@ export default function ExpiryWarning() {
           >
             <Select mode="multiple" placeholder="请选择涉及的批次" showSearch optionFilterProp="label">
               {vaccineBatches.filter(b => b.status !== 'destroyed').map(batch => (
-                <Option key={batch.id} value={batch.batchNo} label={`${batch.vaccineName} - ${batch.batchNo}`}>
+                <Option key={batch.id} value={batch.id} label={`${batch.vaccineName} - ${batch.batchNo}`}>
                   {batch.vaccineName} - {batch.batchNo}
                 </Option>
               ))}

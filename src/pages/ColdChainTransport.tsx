@@ -235,7 +235,7 @@ export default function ColdChainTransport() {
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
 
-  const { transportRecords, vaccineBatches, addTransportRecord, temperatureRecords, addTemperatureRecord } = useAppStore()
+  const { transportRecords, vaccineBatches, addTransportRecord, temperatureRecords, addTemperatureRecord, updateVaccineBatch } = useAppStore()
 
   const availableBatches = useMemo(() => {
     return vaccineBatches.filter(b => b.status !== 'expired' && b.status !== 'destroyed' && b.quantity > 0)
@@ -302,13 +302,23 @@ export default function ColdChainTransport() {
         driver: values.driver,
         startTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
         startLocation: values.startLocation,
-        endLocation: values.endLocation,
+        endLocation: Array.isArray(values.endLocation) ? values.endLocation.join('、') : (values.endLocation || ''),
         status: 'transporting',
         vaccines: selectedVaccines,
         temperatureRecords: newTempRecords
       }
 
       addTransportRecord(record)
+
+      selectedVaccines.forEach(v => {
+        const batch = vaccineBatches.find(b => b.id === v.batchId)
+        if (batch) {
+          updateVaccineBatch(batch.id, {
+            quantity: Math.max(0, batch.quantity - v.quantity),
+            inTransitQuantity: (batch.inTransitQuantity || 0) + v.quantity
+          })
+        }
+      })
 
       newTempRecords.forEach(tr => {
         const { id, ...tempRecord } = tr
@@ -333,7 +343,15 @@ export default function ColdChainTransport() {
       title: '确认完成运输',
       content: `确定要完成车牌号 ${record.vehicleNo} 的运输任务吗？`,
       onOk: () => {
-        const { updateTransportRecord } = useAppStore.getState()
+        const { updateTransportRecord, vaccineBatches } = useAppStore.getState()
+        record.vaccines.forEach(v => {
+          const batch = vaccineBatches.find(b => b.id === v.batchId)
+          if (batch) {
+            useAppStore.getState().updateVaccineBatch(batch.id, {
+              inTransitQuantity: Math.max(0, (batch.inTransitQuantity || 0) - v.quantity)
+            })
+          }
+        })
         updateTransportRecord(record.id, {
           status: 'completed',
           endTime: dayjs().format('YYYY-MM-DD HH:mm:ss')
@@ -350,12 +368,21 @@ export default function ColdChainTransport() {
       okText: '确认异常',
       okType: 'danger',
       onOk: () => {
-        const { updateTransportRecord } = useAppStore.getState()
+        const { updateTransportRecord, vaccineBatches } = useAppStore.getState()
+        record.vaccines.forEach(v => {
+          const batch = vaccineBatches.find(b => b.id === v.batchId)
+          if (batch) {
+            useAppStore.getState().updateVaccineBatch(batch.id, {
+              quantity: batch.quantity + v.quantity,
+              inTransitQuantity: Math.max(0, (batch.inTransitQuantity || 0) - v.quantity)
+            })
+          }
+        })
         updateTransportRecord(record.id, {
           status: 'abnormal',
           endTime: dayjs().format('YYYY-MM-DD HH:mm:ss')
         })
-        message.success('已标记为异常')
+        message.success('已标记为异常，疫苗已退回库存')
       }
     })
   }

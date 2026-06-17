@@ -127,7 +127,7 @@ export default function StockInOut() {
         operator: '管理员',
         operateTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
         remark: values.remark || '',
-        target: values.target
+        target: Array.isArray(values.target) ? values.target.join('、') : (values.target || '')
       }
 
       addStockRecord(record)
