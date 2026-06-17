@@ -87,6 +87,7 @@ export default function TraceStatistics() {
     chainBreakEvents,
     vaccinationStats,
     vaccineBatches,
+    vaccines,
     clinics,
     temperatureRecords
   } = useAppStore()
@@ -307,7 +308,13 @@ export default function TraceStatistics() {
   }
 
   const getBatchInfo = (batchId: string) => {
-    return vaccineBatches.find(b => b.id === batchId)
+    const batch = vaccineBatches.find(b => b.id === batchId)
+    if (!batch) return null
+    const vaccine = vaccines.find(v => v.id === batch.vaccineId)
+    return {
+      ...batch,
+      manufacturer: vaccine?.manufacturer || '-'
+    }
   }
 
   const traceCodeColumns = [

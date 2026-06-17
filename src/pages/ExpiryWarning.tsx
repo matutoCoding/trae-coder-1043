@@ -182,11 +182,19 @@ export default function ExpiryWarning() {
   const handleDestroySubmit = async () => {
     try {
       const values = await destroyForm.validateFields()
-      const newRecord: DestroyRecord = {
-        ...values,
-        destroyTime: dayjs().format('YYYY-MM-DD HH:mm:ss')
-      }
-      addDestroyRecord(newRecord)
+      const batch = vaccineBatches.find(b => b.id === values.batchId)
+      addDestroyRecord({
+        batchId: values.batchId,
+        vaccineName: batch?.vaccineName || values.vaccineName,
+        batchNo: batch?.batchNo || values.batchNo,
+        quantity: values.quantity,
+        reason: values.reason,
+        destroyMethod: values.destroyMethod,
+        operator: values.operator,
+        supervisor: values.supervisor,
+        destroyTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        remark: values.remark || ''
+      })
       updateVaccineBatch(values.batchId, { status: 'destroyed' })
       message.success('销毁记录添加成功')
       setDestroyModalVisible(false)
@@ -204,13 +212,16 @@ export default function ExpiryWarning() {
   const handleEventSubmit = async () => {
     try {
       const values = await eventForm.validateFields()
-      const newEvent: ChainBreakEvent = {
-        ...values,
+      addChainBreakEvent({
+        eventType: values.eventType,
+        description: values.description,
+        location: values.location,
         startTime: values.startTime.format('YYYY-MM-DD HH:mm:ss'),
         affectedBatches: values.affectedBatches || [],
-        status: 'investigating'
-      }
-      addChainBreakEvent(newEvent)
+        status: 'investigating',
+        handler: values.handler,
+        result: values.result || ''
+      })
       message.success('断链事件添加成功')
       setEventModalVisible(false)
       eventForm.resetFields()

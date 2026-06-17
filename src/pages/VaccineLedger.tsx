@@ -53,11 +53,10 @@ export default function VaccineLedger() {
   const handleAddVaccine = async () => {
     try {
       const values = await vaccineForm.validateFields()
-      const newVaccine: Vaccine = {
+      addVaccine({
         ...values,
         createTime: dayjs().format('YYYY-MM-DD')
-      }
-      addVaccine(newVaccine)
+      })
       message.success('疫苗品种添加成功')
       setVaccineModalVisible(false)
       vaccineForm.resetFields()
@@ -74,15 +73,19 @@ export default function VaccineLedger() {
         message.error('请选择有效的疫苗品种')
         return
       }
-      const newBatch: VaccineBatch = {
-        ...values,
+      addVaccineBatch({
+        vaccineId: values.vaccineId,
         vaccineName: selectedVaccine.name,
+        batchNo: values.batchNo,
         produceDate: values.produceDate.format('YYYY-MM-DD'),
         expireDate: values.expireDate.format('YYYY-MM-DD'),
+        quantity: values.quantity,
+        unit: values.unit,
+        traceCodeStart: values.traceCodeStart,
+        traceCodeEnd: values.traceCodeEnd,
         status: 'normal',
         createTime: dayjs().format('YYYY-MM-DD')
-      }
-      addVaccineBatch(newBatch)
+      })
       message.success('疫苗批次添加成功')
       setBatchModalVisible(false)
       batchForm.resetFields()

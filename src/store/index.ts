@@ -29,20 +29,20 @@ interface AppState {
   destroyRecords: DestroyRecord[]
   traceCodeRecords: TraceCodeRecord[]
   
-  addVaccine: (vaccine: Vaccine) => void
-  addVaccineBatch: (batch: VaccineBatch) => void
-  addStockRecord: (record: StockRecord) => void
-  addTemperatureRecord: (record: TemperatureRecord) => void
-  addTransportRecord: (record: TransportRecord) => void
-  addAlarmRecord: (record: AlarmRecord) => void
+  addVaccine: (vaccine: Omit<Vaccine, 'id'>) => void
+  addVaccineBatch: (batch: Omit<VaccineBatch, 'id'>) => void
+  addStockRecord: (record: Omit<StockRecord, 'id'>) => void
+  addTemperatureRecord: (record: Omit<TemperatureRecord, 'id'>) => void
+  addTransportRecord: (record: Omit<TransportRecord, 'id'>) => void
+  addAlarmRecord: (record: Omit<AlarmRecord, 'id'>) => void
   updateAlarmRecord: (id: string, updates: Partial<AlarmRecord>) => void
-  addDistributionRecord: (record: DistributionRecord) => void
-  addChainBreakEvent: (event: ChainBreakEvent) => void
+  addDistributionRecord: (record: Omit<DistributionRecord, 'id'>) => void
+  addChainBreakEvent: (event: Omit<ChainBreakEvent, 'id'>) => void
   updateChainBreakEvent: (id: string, updates: Partial<ChainBreakEvent>) => void
-  addVaccinationStats: (stats: VaccinationStats) => void
-  addDestroyRecord: (record: DestroyRecord) => void
+  addVaccinationStats: (stats: Omit<VaccinationStats, 'id'>) => void
+  addDestroyRecord: (record: Omit<DestroyRecord, 'id'>) => void
   updateVaccineBatch: (id: string, updates: Partial<VaccineBatch>) => void
-  addTraceCodeRecord: (record: TraceCodeRecord) => void
+  addTraceCodeRecord: (record: Omit<TraceCodeRecord, 'id'>) => void
   updateTraceCodeRecord: (traceCode: string, updates: Partial<TraceCodeRecord>) => void
   updateColdStorage: (id: string, updates: Partial<ColdStorage>) => void
   updateTransportRecord: (id: string, updates: Partial<TransportRecord>) => void

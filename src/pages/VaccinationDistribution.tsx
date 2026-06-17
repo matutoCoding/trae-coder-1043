@@ -220,7 +220,7 @@ export default function VaccinationDistribution() {
               }
             ]
           }
-          addTraceCodeRecord(newTraceRecord as TraceCodeRecord)
+          addTraceCodeRecord(newTraceRecord)
         }
       })
 

@@ -188,4 +188,4 @@ export const traceCodeRecords: TraceCodeRecord[] = [
 export const getNearExpireBatches = () => vaccineBatches.filter(b => b.status === 'nearExpire')
 export const getExpiredBatches = () => vaccineBatches.filter(b => b.status === 'expired')
 export const getActiveAlarms = () => alarmRecords.filter(a => a.status !== 'resolved')
-export const getPendingDistributions = () => distributionRecords.filter(d => d.status === 'pending')
+export const getPendingDistributions = () => distributionRecords.filter(d => d.receiveStatus === 'pending')

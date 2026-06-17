@@ -310,7 +310,8 @@ export default function ColdChainTransport() {
       addTransportRecord(record)
 
       newTempRecords.forEach(tr => {
-        addTemperatureRecord(tr)
+        const { id, ...tempRecord } = tr
+        addTemperatureRecord(tempRecord)
       })
 
       message.success('运输登记成功')
