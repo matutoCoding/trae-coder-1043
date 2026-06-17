@@ -81,6 +81,9 @@ export interface TransportRecord {
     quantity: number
   }[]
   temperatureRecords: TemperatureRecord[]
+  abnormalRemark?: string
+  conclusion?: string
+  temperatureOverLimit?: boolean
 }
 
 export interface AlarmRecord {
@@ -135,6 +138,13 @@ export interface ChainBreakEvent {
   status: 'investigating' | 'processing' | 'closed'
   handler: string
   result?: string
+  batchAssessments?: {
+    batchId: string
+    result: 'continue' | 'retest' | 'destroy'
+    suggestion: string
+    assessTime: string
+    assessor: string
+  }[]
 }
 
 export interface VaccinationStats {

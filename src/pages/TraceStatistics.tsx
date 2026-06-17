@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import {
   Tabs, Table, Button, Form, Input, Select, DatePicker,
   Space, message, Tag, Timeline, Card, Descriptions, Row, Col,
-  Statistic, List, Divider, Empty, Collapse, Typography
+  Statistic, List, Divider, Empty, Collapse, Typography,
+  Modal, Alert
 } from 'antd'
 import type { InputRef } from 'antd/es/input/Input'
 import {
@@ -12,24 +13,27 @@ import {
   EnvironmentOutlined, MedicineBoxOutlined,
   CalendarOutlined, TeamOutlined, ShopOutlined,
   ApartmentOutlined, SendOutlined, TruckOutlined,
-  CheckCircleOutlined, ScissorOutlined, DashboardOutlined
+  CheckCircleOutlined, ScissorOutlined, DashboardOutlined,
+  InfoCircleOutlined, ProfileOutlined, DeleteOutlined,
+  EyeOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import { useAppStore } from '@/store'
 import type {
   TraceCodeRecord, ChainBreakEvent, VaccinationStats,
-  VaccineBatch, StockRecord, TransportRecord, DistributionRecord
+  VaccineBatch, StockRecord, TransportRecord, DistributionRecord,
+  DestroyRecord
 } from '@/types'
 import type { ColumnsType } from 'antd/es/table'
 
-const { Option } = Select
 const { RangePicker } = DatePicker
 const { Text } = Typography
+const { Panel } = Collapse
 
 type TabKey = 'traceCodeQuery' | 'batchTrace' | 'chainBreakEvent' | 'vaccinationStats'
 
-type TraceLinkType = 'stockIn' | 'stockOut' | 'transport' | 'distribution' | 'receive' | 'scan' | 'chainBreak'
+type TraceLinkType = 'stockIn' | 'stockOut' | 'transport' | 'distribution' | 'receive' | 'scan' | 'chainBreak' | 'destroy'
 
 interface TraceLinkItem {
   key: string
@@ -37,7 +41,14 @@ interface TraceLinkItem {
   time: string
   title: string
   description: string
-  detail: any
+  detail: unknown
+}
+
+interface ScanHistoryItem {
+  time: string
+  location: string
+  operator: string
+  action: string
 }
 
 const traceStatusTextMap: Record<string, string> = {
@@ -106,6 +117,18 @@ const batchStatusColorMap: Record<string, string> = {
   destroyed: 'default'
 }
 
+const assessmentResultTextMap: Record<string, string> = {
+  continue: '继续使用',
+  retest: '复检',
+  destroy: '销毁'
+}
+
+const assessmentResultColorMap: Record<string, string> = {
+  continue: 'green',
+  retest: 'orange',
+  destroy: 'red'
+}
+
 const linkTypeConfig: Record<TraceLinkType, { label: string; color: string; icon: React.ReactNode }> = {
   stockIn: { label: '入库', color: 'blue', icon: <InboxOutlined /> },
   stockOut: { label: '出库', color: 'orange', icon: <SendOutlined /> },
@@ -113,7 +136,12 @@ const linkTypeConfig: Record<TraceLinkType, { label: string; color: string; icon
   distribution: { label: '分发', color: 'purple', icon: <MedicineBoxOutlined /> },
   receive: { label: '接收', color: 'green', icon: <CheckCircleOutlined /> },
   scan: { label: '扫码', color: 'blue', icon: <QrcodeOutlined /> },
-  chainBreak: { label: '断链事件', color: 'red', icon: <WarningOutlined /> }
+  chainBreak: { label: '断链事件', color: 'red', icon: <WarningOutlined /> },
+  destroy: { label: '销毁', color: 'default', icon: <DeleteOutlined /> }
+}
+
+interface BatchInfoWithManufacturer extends VaccineBatch {
+  manufacturer: string
 }
 
 export default function TraceStatistics() {
@@ -130,6 +158,23 @@ export default function TraceStatistics() {
   const [batchTraceDateRange, setBatchTraceDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const scanInputRef = useRef<InputRef>(null)
 
+  const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [profileBatchId, setProfileBatchId] = useState<string | null>(null)
+
+  const [assessModalOpen, setAssessModalOpen] = useState(false)
+  const [assessEvent, setAssessEvent] = useState<ChainBreakEvent | null>(null)
+  const [assessForm] = Form.useForm<{
+    batchAssessments: { batchId: string; result: 'continue' | 'retest' | 'destroy'; suggestion: string }[]
+    assessor: string
+    assessTime: dayjs.Dayjs
+  }>()
+
+  const [recordDetailModal, setRecordDetailModal] = useState<{
+    open: boolean
+    title: string
+    record: unknown
+  }>({ open: false, title: '', record: null })
+
   const {
     traceCodeRecords,
     chainBreakEvents,
@@ -140,7 +185,9 @@ export default function TraceStatistics() {
     temperatureRecords,
     stockRecords,
     transportRecords,
-    distributionRecords
+    distributionRecords,
+    destroyRecords,
+    updateChainBreakEvent
   } = useAppStore()
 
   useEffect(() => {
@@ -178,7 +225,7 @@ export default function TraceStatistics() {
     return vaccinationStats.filter(s => {
       if (dateRange) {
         const statDate = dayjs(s.date)
-        if (statDate.isBefore(dateRange[0]) || statDate.isAfter(dateRange[1])) {
+        if (statDate.isBefore(dateRange[0].startOf('day')) || statDate.isAfter(dateRange[1].endOf('day'))) {
           return false
         }
       }
@@ -199,7 +246,7 @@ export default function TraceStatistics() {
       if (batchTraceStatusFilter && b.status !== batchTraceStatusFilter) return false
       if (batchTraceDateRange) {
         const ct = dayjs(b.createTime)
-        if (ct.isBefore(batchTraceDateRange[0]) || ct.isAfter(batchTraceDateRange[1])) return false
+        if (ct.isBefore(batchTraceDateRange[0].startOf('day')) || ct.isAfter(batchTraceDateRange[1].endOf('day'))) return false
       }
       return true
     })
@@ -219,13 +266,75 @@ export default function TraceStatistics() {
     return { totalDoses, todayDoses, avgCoverage, clinicCount }
   }, [filteredStats])
 
-  const getBatchInfo = (batchId: string) => {
+  const getBatchInfo = (batchId: string): BatchInfoWithManufacturer | null => {
     const batch = vaccineBatches.find(b => b.id === batchId)
     if (!batch) return null
     const vaccine = vaccines.find(v => v.id === batch.vaccineId)
     return {
       ...batch,
       manufacturer: vaccine?.manufacturer || '-'
+    }
+  }
+
+  const getBatchTransportRecords = (batchId: string): TransportRecord[] => {
+    return transportRecords.filter(t => t.vaccines.some(v => v.batchId === batchId))
+  }
+
+  const getBatchStockInRecords = (batchId: string): StockRecord[] => {
+    return stockRecords.filter(s => s.batchId === batchId && s.type === 'in')
+  }
+
+  const getBatchStockOutRecords = (batchId: string): StockRecord[] => {
+    return stockRecords.filter(s => s.batchId === batchId && s.type === 'out')
+  }
+
+  const getBatchDistributionRecords = (batchId: string): DistributionRecord[] => {
+    return distributionRecords.filter(d => d.batchId === batchId)
+  }
+
+  const getBatchScanRecords = (batchId: string): { record: TraceCodeRecord; history: ScanHistoryItem }[] => {
+    return traceCodeRecords
+      .filter(t => t.batchId === batchId)
+      .flatMap(t => t.scanHistory.map(h => ({ record: t, history: h })))
+  }
+
+  const getBatchDestroyRecords = (batchId: string): DestroyRecord[] => {
+    return destroyRecords.filter(d => d.batchId === batchId)
+  }
+
+  const getBatchChainBreakEvents = (batchId: string): ChainBreakEvent[] => {
+    return chainBreakEvents.filter(e => e.affectedBatches.includes(batchId))
+  }
+
+  const getBatchTempChartOption = (batchId: string) => {
+    const transports = getBatchTransportRecords(batchId)
+    const allTemps = transports.flatMap(t => t.temperatureRecords)
+      .sort((a, b) => dayjs(a.recordTime).valueOf() - dayjs(b.recordTime).valueOf())
+
+    return {
+      tooltip: { trigger: 'axis' },
+      xAxis: {
+        type: 'category',
+        data: allTemps.map(t => t.recordTime.slice(5, 16)),
+        axisLabel: { fontSize: 10, rotate: 30 }
+      },
+      yAxis: { type: 'value', name: '温度(℃)', min: 0, max: 15 },
+      series: [{
+        data: allTemps.map(t => t.temperature),
+        type: 'line',
+        smooth: true,
+        lineStyle: { color: '#1890ff', width: 2 },
+        itemStyle: { color: '#1890ff' },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          data: [
+            { yAxis: 2, lineStyle: { color: '#52c41a', type: 'dashed' }, label: { formatter: '2℃', fontSize: 10, color: '#52c41a' } },
+            { yAxis: 8, lineStyle: { color: '#52c41a', type: 'dashed' }, label: { formatter: '8℃', fontSize: 10, color: '#52c41a' } }
+          ]
+        }
+      }],
+      grid: { left: 50, right: 20, top: 30, bottom: 50 }
     }
   }
 
@@ -313,43 +422,29 @@ export default function TraceStatistics() {
         })
       })
 
+    destroyRecords
+      .filter(d => d.batchId === batchId)
+      .forEach(d => {
+        links.push({
+          key: `destroy-${d.id}`,
+          type: 'destroy',
+          time: d.destroyTime,
+          title: `销毁 ${d.quantity}${batch.unit}`,
+          description: `原因：${d.reason}，方式：${d.destroyMethod}`,
+          detail: d
+        })
+      })
+
     return links.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
   }
 
-  const getBatchTransportRecords = (batchId: string) => {
-    return transportRecords.filter(t => t.vaccines.some(v => v.batchId === batchId))
-  }
-
-  const getBatchTempChartOption = (batchId: string) => {
-    const transports = getBatchTransportRecords(batchId)
-    const allTemps = transports.flatMap(t => t.temperatureRecords)
-      .sort((a, b) => dayjs(a.recordTime).valueOf() - dayjs(b.recordTime).valueOf())
-
-    return {
-      tooltip: { trigger: 'axis' },
-      xAxis: {
-        type: 'category',
-        data: allTemps.map(t => t.recordTime.slice(5, 16)),
-        axisLabel: { fontSize: 10, rotate: 30 }
-      },
-      yAxis: { type: 'value', name: '温度(℃)', min: 0, max: 15 },
-      series: [{
-        data: allTemps.map(t => t.temperature),
-        type: 'line',
-        smooth: true,
-        lineStyle: { color: '#1890ff', width: 2 },
-        itemStyle: { color: '#1890ff' },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          data: [
-            { yAxis: 2, lineStyle: { color: '#52c41a', type: 'dashed' }, label: { formatter: '2℃', fontSize: 10, color: '#52c41a' } },
-            { yAxis: 8, lineStyle: { color: '#52c41a', type: 'dashed' }, label: { formatter: '8℃', fontSize: 10, color: '#52c41a' } }
-          ]
-        }
-      }],
-      grid: { left: 50, right: 20, top: 30, bottom: 50 }
-    }
+  const getBatchStatistics = (batchId: string) => {
+    const stockInTotal = getBatchStockInRecords(batchId).reduce((s, r) => s + r.quantity, 0)
+    const stockOutTotal = getBatchStockOutRecords(batchId).reduce((s, r) => s + r.quantity, 0)
+    const inTransit = getBatchTransportRecords(batchId)
+      .filter(t => t.status === 'transporting')
+      .reduce((s, t) => s + (t.vaccines.find(v => v.batchId === batchId)?.quantity || 0), 0)
+    return { stockInTotal, stockOutTotal, inTransit }
   }
 
   const trendChartOption = useMemo(() => {
@@ -497,7 +592,7 @@ export default function TraceStatistics() {
     }
   }, [selectedEvent, temperatureRecords])
 
-  const handleTraceCodeKeyDown = (e: React.KeyboardEvent) => {
+  const handleTraceCodeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
       if (traceCodeInput.trim()) {
@@ -509,7 +604,74 @@ export default function TraceStatistics() {
     }
   }
 
-  const traceCodeColumns: ColumnsType<{time: string; location: string; operator: string; action: string}> = [
+  const openProfileModal = (batchId: string) => {
+    setProfileBatchId(batchId)
+    setProfileModalOpen(true)
+  }
+
+  const openAssessModal = (event: ChainBreakEvent) => {
+    setAssessEvent(event)
+    const initialAssessments = event.affectedBatches.map(batchId => {
+      const existing = event.batchAssessments?.find(a => a.batchId === batchId)
+      return {
+        batchId,
+        result: existing?.result || 'continue',
+        suggestion: existing?.suggestion || ''
+      }
+    })
+    assessForm.setFieldsValue({
+      batchAssessments: initialAssessments,
+      assessor: event.handler || '',
+      assessTime: dayjs()
+    })
+    setAssessModalOpen(true)
+  }
+
+  const handleAssessSubmit = async () => {
+    try {
+      const values = await assessForm.validateFields()
+      if (!assessEvent) return
+
+      const batchAssessments = values.batchAssessments.map(a => ({
+        ...a,
+        assessTime: values.assessTime.format('YYYY-MM-DD HH:mm:ss'),
+        assessor: values.assessor
+      }))
+
+      updateChainBreakEvent(assessEvent.id, {
+        batchAssessments,
+        status: 'closed',
+        result: `已完成影响评估，涉及 ${assessEvent.affectedBatches.length} 个批次：${batchAssessments.map(a => `${getBatchInfo(a.batchId)?.batchNo}(${assessmentResultTextMap[a.result]})`).join('、')}`
+      })
+      message.success('评估提交成功')
+      setAssessModalOpen(false)
+      setAssessEvent(null)
+    } catch {
+      message.error('请完善评估信息')
+    }
+  }
+
+  const openRecordDetail = (title: string, record: unknown) => {
+    setRecordDetailModal({ open: true, title, record })
+  }
+
+  const renderRecordDescriptions = (record: unknown) => {
+    if (!record) return null
+    const entries = Object.entries(record as Record<string, unknown>)
+    return (
+      <Descriptions column={2} size="small" bordered>
+        {entries.map(([key, value]) => (
+          <Descriptions.Item key={key} label={key}>
+            {typeof value === 'object' && value !== null
+              ? JSON.stringify(value)
+              : String(value ?? '-')}
+          </Descriptions.Item>
+        ))}
+      </Descriptions>
+    )
+  }
+
+  const traceCodeColumns: ColumnsType<ScanHistoryItem> = [
     { title: '扫描时间', dataIndex: 'time', key: 'time', width: 160 },
     {
       title: '地点', dataIndex: 'location', key: 'location', width: 200,
@@ -538,14 +700,24 @@ export default function TraceStatistics() {
     },
     { title: '批号', dataIndex: 'batchNo', key: 'batchNo', width: 130 },
     {
-      title: '库存数量', key: 'stockQty', width: 120,
-      render: (_, r) => `${r.quantity}${r.unit}`
+      title: '生产厂家', key: 'manufacturer', width: 140,
+      render: (_, r) => getBatchInfo(r.id)?.manufacturer || '-'
     },
     {
-      title: '运输中', key: 'transitQty', width: 100,
-      render: (_, r) => r.inTransitQuantity ? (
-        <Tag color="cyan">{r.inTransitQuantity}{r.unit}</Tag>
-      ) : <span style={{ color: '#999' }}>0{r.unit}</span>
+      title: '数量分布', key: 'qtyDistribution', width: 120,
+      render: (_, r) => {
+        const stats = getBatchStatistics(r.id)
+        return (
+          <div>
+            <div>
+              <Tag color="blue" style={{ marginRight: 0 }}>在库: {r.quantity}{r.unit}</Tag>
+            </div>
+            <div style={{ marginTop: 4 }}>
+              <Tag color="cyan" style={{ marginRight: 0 }}>运输中: {stats.inTransit}{r.unit}</Tag>
+            </div>
+          </div>
+        )
+      }
     },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 100,
@@ -553,16 +725,34 @@ export default function TraceStatistics() {
     },
     { title: '生产日期', dataIndex: 'produceDate', key: 'produceDate', width: 110 },
     { title: '有效期', dataIndex: 'expireDate', key: 'expireDate', width: 110 },
+    { title: '创建时间', dataIndex: 'createTime', key: 'createTime', width: 110 },
     {
-      title: '操作', key: 'action', width: 120,
+      title: '操作', key: 'action', width: 180, fixed: 'right',
       render: (_, r) => (
-        <Button
-          type="link"
-          icon={<ApartmentOutlined />}
-          onClick={() => setSelectedBatch(r)}
-        >
-          追溯链路
-        </Button>
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<ApartmentOutlined />}
+            onClick={(e) => {
+              e.stopPropagation()
+              setSelectedBatch(r)
+            }}
+          >
+            链路
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<ProfileOutlined />}
+            onClick={(e) => {
+              e.stopPropagation()
+              openProfileModal(r.id)
+            }}
+          >
+            批次画像
+          </Button>
+        </Space>
       )
     }
   ]
@@ -600,80 +790,662 @@ export default function TraceStatistics() {
     }
   ]
 
-  const renderChainBreakBatchDetail = () => {
-    if (!selectedEvent || selectedEvent.affectedBatches.length === 0) return null
-    return (
-      <Collapse
-        defaultActiveKey={selectedEvent.affectedBatches.map((_, i) => String(i))}
-        style={{ marginTop: 16 }}
-      >
-        {selectedEvent.affectedBatches.map((batchId, idx) => {
-          const info = getBatchInfo(batchId)
-          const transportList = getBatchTransportRecords(batchId)
-          return (
-            <Collapse.Panel
-              key={String(idx)}
-              header={
-                <Space>
-                  <MedicineBoxOutlined style={{ color: '#1890ff' }} />
-                  <Text strong>{info ? `${info.vaccineName} - ${info.batchNo}` : batchId}</Text>
-                  {info && (
-                    <Tag color={batchStatusColorMap[info.status]}>
-                      {batchStatusTextMap[info.status]}
-                    </Tag>
-                  )}
-                </Space>
-              }
-            >
-              {info ? (
-                <div>
-                  <Descriptions column={2} size="small" bordered>
-                    <Descriptions.Item label="疫苗名称">{info.vaccineName}</Descriptions.Item>
-                    <Descriptions.Item label="批号">{info.batchNo}</Descriptions.Item>
-                    <Descriptions.Item label="生产厂家">{info.manufacturer}</Descriptions.Item>
-                    <Descriptions.Item label="有效期">{info.expireDate}</Descriptions.Item>
-                    <Descriptions.Item label="在库数量">{info.quantity}{info.unit}</Descriptions.Item>
-                    <Descriptions.Item label="运输中">
-                      {info.inTransitQuantity ? `${info.inTransitQuantity}${info.unit}` : `0${info.unit}`}
-                    </Descriptions.Item>
-                  </Descriptions>
-                  {transportList.length > 0 && (
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ marginBottom: 8, fontWeight: 500 }}>
-                        <DashboardOutlined /> 关联运输温度曲线
+  const chainBreakEventColumns: ColumnsType<ChainBreakEvent> = [
+    {
+      title: '事件ID', dataIndex: 'id', key: 'id', width: 100,
+      render: (val: string) => <Text code>{val}</Text>
+    },
+    {
+      title: '事件类型', dataIndex: 'eventType', key: 'eventType', width: 110,
+      render: (val: string) => <Tag color={eventTypeColorMap[val]}>{eventTypeTextMap[val]}</Tag>
+    },
+    {
+      title: '发生位置', dataIndex: 'location', key: 'location', width: 200,
+      render: (val: string) => <Space><EnvironmentOutlined />{val}</Space>
+    },
+    { title: '事件描述', dataIndex: 'description', key: 'description', ellipsis: true },
+    {
+      title: '涉及批次', key: 'batches', width: 140,
+      render: (_, r) => (
+        <Space wrap size={4}>
+          {r.affectedBatches.slice(0, 2).map(bid => {
+            const info = getBatchInfo(bid)
+            return <Tag key={bid} color="blue">{info?.batchNo || bid}</Tag>
+          })}
+          {r.affectedBatches.length > 2 && <Tag>+{r.affectedBatches.length - 2}</Tag>}
+        </Space>
+      )
+    },
+    { title: '发生时间', dataIndex: 'startTime', key: 'startTime', width: 160 },
+    {
+      title: '状态', dataIndex: 'status', key: 'status', width: 100,
+      render: (val: string) => <Tag color={eventStatusColorMap[val]}>{eventStatusTextMap[val]}</Tag>
+    },
+    {
+      title: '处理人', dataIndex: 'handler', key: 'handler', width: 100,
+      render: (val: string) => <Space><UserOutlined />{val}</Space>
+    },
+    {
+      title: '操作', key: 'action', width: 180, fixed: 'right',
+      render: (_, r) => (
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => setSelectedEvent(r)}
+          >
+            详情
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<ExclamationCircleOutlined />}
+            onClick={() => openAssessModal(r)}
+            disabled={r.status === 'closed'}
+          >
+            影响评估
+          </Button>
+        </Space>
+      )
+    }
+  ]
+
+  const chainBreakExpandedRowRender = (record: ChainBreakEvent) => (
+    <Collapse defaultActiveKey={record.affectedBatches.map((_, i) => String(i))}>
+      {record.affectedBatches.map((batchId, idx) => {
+        const info = getBatchInfo(batchId)
+        const transportList = getBatchTransportRecords(batchId)
+        const existingAssessment = record.batchAssessments?.find(a => a.batchId === batchId)
+        return (
+          <Panel
+            key={String(idx)}
+            header={
+              <Space>
+                <MedicineBoxOutlined style={{ color: '#1890ff' }} />
+                <Text strong>{info ? `${info.vaccineName} - ${info.batchNo}` : batchId}</Text>
+                {info && (
+                  <Tag color={batchStatusColorMap[info.status]}>
+                    {batchStatusTextMap[info.status]}
+                  </Tag>
+                )}
+                {existingAssessment && (
+                  <Tag color={assessmentResultColorMap[existingAssessment.result]}>
+                    评估：{assessmentResultTextMap[existingAssessment.result]}
+                  </Tag>
+                )}
+              </Space>
+            }
+          >
+            {info ? (
+              <div>
+                <Descriptions column={2} size="small" bordered style={{ marginBottom: 12 }}>
+                  <Descriptions.Item label="疫苗名称">{info.vaccineName}</Descriptions.Item>
+                  <Descriptions.Item label="批号">{info.batchNo}</Descriptions.Item>
+                  <Descriptions.Item label="生产厂家">{info.manufacturer}</Descriptions.Item>
+                  <Descriptions.Item label="有效期">{info.expireDate}</Descriptions.Item>
+                  <Descriptions.Item label="在库数量">{info.quantity}{info.unit}</Descriptions.Item>
+                  <Descriptions.Item label="运输中">
+                    {info.inTransitQuantity ? `${info.inTransitQuantity}${info.unit}` : `0${info.unit}`}
+                  </Descriptions.Item>
+                </Descriptions>
+
+                {existingAssessment && (
+                  <Alert
+                    style={{ marginBottom: 12 }}
+                    type={existingAssessment.result === 'destroy' ? 'error' : existingAssessment.result === 'retest' ? 'warning' : 'success'}
+                    showIcon
+                    message={`评估结果：${assessmentResultTextMap[existingAssessment.result]}`}
+                    description={
+                      <div>
+                        <p style={{ margin: 0 }}>处理建议：{existingAssessment.suggestion}</p>
+                        <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#888' }}>
+                          评估人：{existingAssessment.assessor} | 评估时间：{existingAssessment.assessTime}
+                        </p>
                       </div>
-                      <ReactECharts option={getBatchTempChartOption(batchId)} style={{ height: 200 }} />
-                      <List
-                        size="small"
-                        style={{ marginTop: 8 }}
-                        header={<div style={{ fontSize: 12, color: '#888' }}>关联运输记录：</div>}
-                        dataSource={transportList}
-                        renderItem={tr => (
-                          <List.Item>
-                            <Space>
-                              <TruckOutlined />
-                              <span>{tr.vehicleNo}</span>
-                              <Tag>{tr.startLocation} → {tr.endLocation}</Tag>
-                              <Tag color={tr.status === 'transporting' ? 'processing' : tr.status === 'completed' ? 'success' : 'error'}>
-                                {tr.status === 'transporting' ? '运输中' : tr.status === 'completed' ? '已完成' : '异常'}
-                              </Tag>
-                              <span style={{ color: '#999', fontSize: 12 }}>{tr.startTime}</span>
-                            </Space>
-                          </List.Item>
-                        )}
-                      />
+                    }
+                  />
+                )}
+
+                {transportList.length > 0 && (
+                  <div>
+                    <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                      <DashboardOutlined /> 关联运输温度曲线
                     </div>
+                    <ReactECharts option={getBatchTempChartOption(batchId)} style={{ height: 200 }} />
+                    <List
+                      size="small"
+                      style={{ marginTop: 8 }}
+                      header={<div style={{ fontSize: 12, color: '#888' }}>关联运输记录：</div>}
+                      dataSource={transportList}
+                      renderItem={(tr) => (
+                        <List.Item
+                          actions={[
+                            <Button type="link" size="small" onClick={() => openRecordDetail('运输记录详情', tr)}>
+                              详情
+                            </Button>
+                          ]}
+                        >
+                          <Space>
+                            <TruckOutlined />
+                            <span>{tr.vehicleNo}</span>
+                            <Tag>{tr.startLocation} → {tr.endLocation}</Tag>
+                            <Tag color={tr.status === 'transporting' ? 'processing' : tr.status === 'completed' ? 'success' : 'error'}>
+                              {tr.status === 'transporting' ? '运输中' : tr.status === 'completed' ? '已完成' : '异常'}
+                            </Tag>
+                            <span style={{ color: '#999', fontSize: 12 }}>{tr.startTime}</span>
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ color: '#999' }}>未找到批次信息</div>
+            )}
+          </Panel>
+        )
+      })}
+    </Collapse>
+  )
+
+  const renderBatchProfileModal = () => {
+    if (!profileBatchId) return null
+    const info = getBatchInfo(profileBatchId)
+    if (!info) return null
+
+    const stats = getBatchStatistics(profileBatchId)
+    const stockInList = getBatchStockInRecords(profileBatchId)
+    const stockOutList = getBatchStockOutRecords(profileBatchId)
+    const transportList = getBatchTransportRecords(profileBatchId)
+    const distributionList = getBatchDistributionRecords(profileBatchId)
+    const scanList = getBatchScanRecords(profileBatchId)
+    const destroyList = getBatchDestroyRecords(profileBatchId)
+    const chainBreakList = getBatchChainBreakEvents(profileBatchId)
+    const traceLinks = getBatchTraceLinks(profileBatchId)
+
+    return (
+      <Modal
+        title={
+          <Space>
+            <ProfileOutlined />
+            批次画像 - {info.vaccineName} [{info.batchNo}]
+          </Space>
+        }
+        open={profileModalOpen}
+        onCancel={() => {
+          setProfileModalOpen(false)
+          setProfileBatchId(null)
+        }}
+        footer={[
+          <Button key="close" onClick={() => {
+            setProfileModalOpen(false)
+            setProfileBatchId(null)
+          }}>关闭</Button>
+        ]}
+        width={1100}
+        styles={{ body: { maxHeight: '80vh', overflowY: 'auto' } }}
+      >
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={14}>
+            <Card size="small" title="批次基本信息">
+              <Descriptions column={2} size="small">
+                <Descriptions.Item label="疫苗名称">{info.vaccineName}</Descriptions.Item>
+                <Descriptions.Item label="批号">{info.batchNo}</Descriptions.Item>
+                <Descriptions.Item label="生产厂家">{info.manufacturer}</Descriptions.Item>
+                <Descriptions.Item label="有效期">{info.expireDate}</Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <Tag color={batchStatusColorMap[info.status]}>{batchStatusTextMap[info.status]}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="生产日期">{info.produceDate}</Descriptions.Item>
+              </Descriptions>
+            </Card>
+          </Col>
+          <Col span={10}>
+            <Card size="small" title="数量统计">
+              <Row gutter={8}>
+                <Col span={12}>
+                  <Statistic title="入库总量" value={stats.stockInTotal} suffix={info.unit} valueStyle={{ color: '#1890ff', fontSize: 18 }} />
+                </Col>
+                <Col span={12}>
+                  <Statistic title="出库总量" value={stats.stockOutTotal} suffix={info.unit} valueStyle={{ color: '#fa8c16', fontSize: 18 }} />
+                </Col>
+                <Col span={12} style={{ marginTop: 8 }}>
+                  <Statistic title="运输中" value={stats.inTransit} suffix={info.unit} valueStyle={{ color: '#13c2c2', fontSize: 18 }} />
+                </Col>
+                <Col span={12} style={{ marginTop: 8 }}>
+                  <Statistic title="当前在库" value={info.quantity} suffix={info.unit} valueStyle={{ color: '#52c41a', fontSize: 18 }} />
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        </Row>
+
+        {transportList.length > 0 && (
+          <Card size="small" title={<Space><DashboardOutlined />关联运输温度曲线</Space>} style={{ marginBottom: 16 }}>
+            <ReactECharts option={getBatchTempChartOption(profileBatchId)} style={{ height: 240 }} />
+          </Card>
+        )}
+
+        {chainBreakList.length > 0 && (
+          <Card size="small" title={<Space><WarningOutlined />断链事件</Space>} style={{ marginBottom: 16 }}>
+            {chainBreakList.map(evt => (
+              <Alert
+                key={evt.id}
+                style={{ marginBottom: 8 }}
+                type="warning"
+                showIcon
+                icon={<WarningOutlined />}
+                message={
+                  <Space>
+                    <Tag color={eventTypeColorMap[evt.eventType]}>{eventTypeTextMap[evt.eventType]}</Tag>
+                    <Tag color={eventStatusColorMap[evt.status]}>{eventStatusTextMap[evt.status]}</Tag>
+                    {evt.startTime}
+                  </Space>
+                }
+                description={
+                  <div>
+                    <p style={{ margin: 0 }}>{evt.description}</p>
+                    <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#888' }}>
+                      位置：{evt.location} | 处理人：{evt.handler}
+                      {evt.result && ` | 评估结果：${evt.result}`}
+                    </p>
+                  </div>
+                }
+              />
+            ))}
+          </Card>
+        )}
+
+        <Divider orientation="left" orientationMargin={0}>分类记录统计</Divider>
+
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <Card
+              size="small"
+              title={<Space><InboxOutlined />入库记录<Tag color="blue">{stockInList.length}</Tag></Space>}
+              styles={{ body: { padding: 8, maxHeight: 260, overflowY: 'auto' } }}
+            >
+              {stockInList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={stockInList}
+                  renderItem={(item) => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" size="small" onClick={() => openRecordDetail('入库记录详情', item)}>详情</Button>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        title={<span>+{item.quantity}{item.unit} · {item.operateTime}</span>}
+                        description={`来源：${item.source || '-'} | 操作员：${item.operator}`}
+                      />
+                    </List.Item>
                   )}
-                </div>
-              ) : (
-                <div style={{ color: '#999' }}>未找到批次信息</div>
-              )}
-            </Collapse.Panel>
-          )
-        })}
-      </Collapse>
+                />
+              ) : <Empty description="暂无入库记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </Card>
+          </Col>
+          <Col span={12}>
+            <Card
+              size="small"
+              title={<Space><SendOutlined />出库记录<Tag color="orange">{stockOutList.length}</Tag></Space>}
+              styles={{ body: { padding: 8, maxHeight: 260, overflowY: 'auto' } }}
+            >
+              {stockOutList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={stockOutList}
+                  renderItem={(item) => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" size="small" onClick={() => openRecordDetail('出库记录详情', item)}>详情</Button>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        title={<span>-{item.quantity}{item.unit} · {item.operateTime}</span>}
+                        description={`去向：${item.target || '-'} | 操作员：${item.operator}`}
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : <Empty description="暂无出库记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </Card>
+          </Col>
+        </Row>
+
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <Card
+              size="small"
+              title={<Space><TruckOutlined />运输记录<Tag color="cyan">{transportList.length}</Tag></Space>}
+              styles={{ body: { padding: 8, maxHeight: 260, overflowY: 'auto' } }}
+            >
+              {transportList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={transportList}
+                  renderItem={(item) => {
+                    const v = item.vaccines.find(vv => vv.batchId === profileBatchId)
+                    return (
+                      <List.Item
+                        actions={[
+                          <Button type="link" size="small" onClick={() => openRecordDetail('运输记录详情', item)}>详情</Button>
+                        ]}
+                      >
+                        <List.Item.Meta
+                          title={
+                            <Space>
+                              <span>{item.vehicleNo}</span>
+                              <Tag color={item.status === 'transporting' ? 'processing' : item.status === 'completed' ? 'success' : 'error'}>
+                                {item.status === 'transporting' ? '运输中' : item.status === 'completed' ? '已完成' : '异常'}
+                              </Tag>
+                              <span>{v?.quantity || 0}{info.unit}</span>
+                            </Space>
+                          }
+                          description={`${item.startLocation} → ${item.endLocation} | ${item.startTime}`}
+                        />
+                      </List.Item>
+                    )
+                  }}
+                />
+              ) : <Empty description="暂无运输记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </Card>
+          </Col>
+          <Col span={12}>
+            <Card
+              size="small"
+              title={<Space><MedicineBoxOutlined />分发接种<Tag color="purple">{distributionList.length}</Tag></Space>}
+              styles={{ body: { padding: 8, maxHeight: 260, overflowY: 'auto' } }}
+            >
+              {distributionList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={distributionList}
+                  renderItem={(item) => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" size="small" onClick={() => openRecordDetail('分发记录详情', item)}>详情</Button>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        title={
+                          <Space>
+                            <span>{item.clinicName}</span>
+                            <Tag color={item.receiveStatus === 'received' ? 'success' : 'warning'}>
+                              {item.receiveStatus === 'received' ? '已接收' : '待接收'}
+                            </Tag>
+                            <span>{item.quantity}{info.unit}</span>
+                          </Space>
+                        }
+                        description={`分发人：${item.distributor} | ${item.distributeTime}`}
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : <Empty description="暂无分发记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </Card>
+          </Col>
+        </Row>
+
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <Card
+              size="small"
+              title={<Space><QrcodeOutlined />扫码记录<Tag color="blue">{scanList.length}</Tag></Space>}
+              styles={{ body: { padding: 8, maxHeight: 260, overflowY: 'auto' } }}
+            >
+              {scanList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={scanList}
+                  renderItem={(item) => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" size="small" onClick={() => openRecordDetail('扫码记录详情', item)}>详情</Button>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        title={
+                          <Space>
+                            <Tag color={scanActionColorMap[item.history.action] || 'default'}>{item.history.action}</Tag>
+                            <Text code>{item.record.traceCode}</Text>
+                          </Space>
+                        }
+                        description={`${item.history.location} | ${item.history.operator} | ${item.history.time}`}
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : <Empty description="暂无扫码记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </Card>
+          </Col>
+          <Col span={12}>
+            <Card
+              size="small"
+              title={<Space><DeleteOutlined />销毁记录<Tag color="red">{destroyList.length}</Tag></Space>}
+              styles={{ body: { padding: 8, maxHeight: 260, overflowY: 'auto' } }}
+            >
+              {destroyList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={destroyList}
+                  renderItem={(item) => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" size="small" onClick={() => openRecordDetail('销毁记录详情', item)}>详情</Button>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        title={<span>{item.quantity}{info.unit} · {item.destroyTime}</span>}
+                        description={`原因：${item.reason} | 方式：${item.destroyMethod}`}
+                      />
+                    </List.Item>
+                  )}
+                />
+              ) : <Empty description="暂无销毁记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </Card>
+          </Col>
+        </Row>
+
+        <Divider orientation="left" orientationMargin={0}>完整链路时间线汇总 ({traceLinks.length} 条)</Divider>
+        <Card size="small">
+          {traceLinks.length > 0 ? (
+            <Timeline
+              mode="left"
+              items={traceLinks.map(link => {
+                const cfg = linkTypeConfig[link.type]
+                return {
+                  color: cfg.color,
+                  label: link.time,
+                  children: (
+                    <div>
+                      <p style={{ margin: 0 }}>
+                        <Tag color={cfg.color}>{cfg.icon} {cfg.label}</Tag>
+                        <Text strong style={{ marginLeft: 8 }}>{link.title}</Text>
+                      </p>
+                      <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>
+                        {link.description}
+                      </p>
+                    </div>
+                  )
+                }
+              })}
+            />
+          ) : (
+            <Empty description="暂无链路数据" />
+          )}
+        </Card>
+      </Modal>
     )
   }
+
+  const renderAssessModal = () => {
+    if (!assessEvent) return null
+
+    return (
+      <Modal
+        title={<Space><ExclamationCircleOutlined />断链事件影响评估</Space>}
+        open={assessModalOpen}
+        onCancel={() => {
+          setAssessModalOpen(false)
+          setAssessEvent(null)
+          assessForm.resetFields()
+        }}
+        onOk={handleAssessSubmit}
+        okText="提交评估"
+        cancelText="取消"
+        width={900}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+      >
+        <Alert
+          style={{ marginBottom: 16 }}
+          type="warning"
+          showIcon
+          message={
+            <Space>
+              <Tag color={eventTypeColorMap[assessEvent.eventType]}>{eventTypeTextMap[assessEvent.eventType]}</Tag>
+              <Text strong>{assessEvent.id}</Text>
+              <Tag color={eventStatusColorMap[assessEvent.status]}>{eventStatusTextMap[assessEvent.status]}</Tag>
+            </Space>
+          }
+          description={
+            <div>
+              <p style={{ margin: 0 }}><strong>描述：</strong>{assessEvent.description}</p>
+              <p style={{ margin: '4px 0 0 0' }}>
+                <strong>位置：</strong>{assessEvent.location}
+                <span style={{ marginLeft: 16 }}><strong>发生时间：</strong>{assessEvent.startTime}</span>
+                <span style={{ marginLeft: 16 }}><strong>处理人：</strong>{assessEvent.handler}</span>
+                <span style={{ marginLeft: 16 }}><strong>涉及批次：</strong>{assessEvent.affectedBatches.length} 个</span>
+              </p>
+            </div>
+          }
+        />
+
+        <Form
+          form={assessForm}
+          layout="vertical"
+        >
+          <Divider orientation="left" orientationMargin={0}>批次评估</Divider>
+          <Form.List name="batchAssessments">
+            {(fields) => (
+              <div>
+                {fields.map((field, index) => {
+                  const batchId = assessEvent.affectedBatches[index]
+                  const batchInfo = getBatchInfo(batchId)
+                  return (
+                    <Card
+                      key={field.key}
+                      size="small"
+                      style={{ marginBottom: 12 }}
+                      title={
+                        <Space>
+                          <MedicineBoxOutlined />
+                          <Text strong>
+                            {batchInfo ? `${batchInfo.vaccineName} - ${batchInfo.batchNo}` : batchId}
+                          </Text>
+                          {batchInfo && (
+                            <Tag color={batchStatusColorMap[batchInfo.status]}>
+                              {batchStatusTextMap[batchInfo.status]}
+                            </Tag>
+                          )}
+                          {batchInfo && (
+                            <span style={{ color: '#888', fontSize: 12 }}>
+                              在库 {batchInfo.quantity}{batchInfo.unit}
+                              {batchInfo.inTransitQuantity ? ` / 运输中 ${batchInfo.inTransitQuantity}${batchInfo.unit}` : ''}
+                            </span>
+                          )}
+                        </Space>
+                      }
+                    >
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item
+                            label={
+                              <Space>
+                                {batchInfo?.vaccineName} / {batchInfo?.batchNo}
+                              </Space>
+                            }
+                            name={[field.name, 'batchId']}
+                            hidden
+                          >
+                            <Input />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item
+                            label="评估结果"
+                            name={[field.name, 'result']}
+                            rules={[{ required: true, message: '请选择评估结果' }]}
+                          >
+                            <Select>
+                              <Select.Option value="continue">
+                                <Tag color="green">✓ 继续使用</Tag>
+                              </Select.Option>
+                              <Select.Option value="retest">
+                                <Tag color="orange">⚡ 复检</Tag>
+                              </Select.Option>
+                              <Select.Option value="destroy">
+                                <Tag color="red">✗ 销毁</Tag>
+                              </Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item
+                        label="处理建议"
+                        name={[field.name, 'suggestion']}
+                        rules={[{ required: true, message: '请填写处理建议' }]}
+                      >
+                        <Input.TextArea rows={2} placeholder="请填写该批次的处理建议和依据..." />
+                      </Form.Item>
+                    </Card>
+                  )
+                })}
+              </div>
+            )}
+          </Form.List>
+
+          <Divider orientation="left" orientationMargin={0}>评估信息</Divider>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="评估人"
+                name="assessor"
+                rules={[{ required: true, message: '请输入评估人' }]}
+              >
+                <Input placeholder="请输入评估人姓名" prefix={<UserOutlined />} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="评估时间"
+                name="assessTime"
+                rules={[{ required: true, message: '请选择评估时间' }]}
+              >
+                <DatePicker showTime style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+    )
+  }
+
+  const renderRecordDetailModal = () => (
+    <Modal
+      title={recordDetailModal.title}
+      open={recordDetailModal.open}
+      onCancel={() => setRecordDetailModal({ open: false, title: '', record: null })}
+      footer={[
+        <Button key="close" onClick={() => setRecordDetailModal({ open: false, title: '', record: null })}>关闭</Button>
+      ]}
+      width={680}
+    >
+      {renderRecordDescriptions(recordDetailModal.record)}
+    </Modal>
+  )
 
   const tabItems = [
     {
@@ -681,7 +1453,7 @@ export default function TraceStatistics() {
       label: (
         <Space>
           <QrcodeOutlined />
-          电子追溯码查询
+          追溯码查询
         </Space>
       ),
       children: (
@@ -761,7 +1533,7 @@ export default function TraceStatistics() {
                     items={foundTraceRecord.scanHistory
                       .slice()
                       .reverse()
-                      .map((item, index) => ({
+                      .map((item) => ({
                         color: scanActionColorMap[item.action] || 'blue',
                         label: item.time,
                         children: (
@@ -840,11 +1612,8 @@ export default function TraceStatistics() {
                 optionFilterProp="label"
                 value={batchTraceVaccineFilter || undefined}
                 onChange={setBatchTraceVaccineFilter}
-              >
-                {batchVaccineOptions.map(opt => (
-                  <Option key={opt.value} value={opt.value} label={opt.label}>{opt.label}</Option>
-                ))}
-              </Select>
+                options={batchVaccineOptions}
+              />
               <Input
                 placeholder="批号搜索"
                 prefix={<SearchOutlined />}
@@ -859,12 +1628,13 @@ export default function TraceStatistics() {
                 allowClear
                 value={batchTraceStatusFilter || undefined}
                 onChange={setBatchTraceStatusFilter}
-              >
-                <Option value="normal">正常</Option>
-                <Option value="nearExpire">临近效期</Option>
-                <Option value="expired">已过期</Option>
-                <Option value="destroyed">已销毁</Option>
-              </Select>
+                options={[
+                  { value: 'normal', label: '正常' },
+                  { value: 'nearExpire', label: '临近效期' },
+                  { value: 'expired', label: '已过期' },
+                  { value: 'destroyed', label: '已销毁' }
+                ]}
+              />
               <RangePicker
                 value={batchTraceDateRange}
                 onChange={(dates) => setBatchTraceDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
@@ -882,7 +1652,7 @@ export default function TraceStatistics() {
                   dataSource={filteredBatches}
                   rowKey="id"
                   pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
-                  scroll={{ x: 1000 }}
+                  scroll={{ x: 1200 }}
                   rowClassName={(r) => selectedBatch?.id === r.id ? 'table-row-selected' : ''}
                   onRow={(r) => ({
                     style: { cursor: 'pointer', background: selectedBatch?.id === r.id ? '#e6f7ff' : undefined },
@@ -970,170 +1740,103 @@ export default function TraceStatistics() {
       label: (
         <Space>
           <WarningOutlined />
-          断链事件追溯
+          断链事件
         </Space>
       ),
       children: (
         <div>
-          <Row gutter={16}>
-            <Col span={8}>
-              <Card
-                title={
-                  <Space>
-                    <WarningOutlined style={{ color: '#fa8c16' }} />
-                    断链事件列表
-                    <Tag color="orange">{eventList.length}</Tag>
-                  </Space>
-                }
-                style={{ height: 'calc(100vh - 200px)', overflow: 'auto' }}
-              >
-                <List
-                  dataSource={eventList}
-                  renderItem={(item) => (
-                    <List.Item
-                      key={item.id}
-                      onClick={() => setSelectedEvent(item)}
-                      style={{
-                        cursor: 'pointer',
-                        backgroundColor: selectedEvent?.id === item.id ? '#e6f7ff' : 'transparent',
-                        borderRadius: 4,
-                        marginBottom: 8,
-                        border: selectedEvent?.id === item.id ? '1px solid #91d5ff' : '1px solid transparent'
-                      }}
-                    >
-                      <List.Item.Meta
-                        title={
-                          <Space>
-                            <Tag color={eventTypeColorMap[item.eventType]}>
-                              {eventTypeTextMap[item.eventType]}
-                            </Tag>
-                            <Tag color={eventStatusColorMap[item.status]}>
-                              {eventStatusTextMap[item.status]}
-                            </Tag>
-                          </Space>
-                        }
-                        description={
-                          <div>
-                            <p style={{ margin: 0, color: '#333' }}>{item.description}</p>
-                            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#999' }}>
-                              <ClockCircleOutlined /> {item.startTime}
-                            </p>
-                            <p style={{ margin: '2px 0 0 0', fontSize: 12, color: '#999' }}>
-                              <EnvironmentOutlined /> {item.location}
-                            </p>
-                          </div>
-                        }
-                      />
-                    </List.Item>
-                  )}
-                />
-              </Card>
-            </Col>
-            <Col span={16}>
-              {selectedEvent ? (
-                <div>
-                  <Card title="事件详情">
-                    <Descriptions bordered column={2} size="small">
-                      <Descriptions.Item label="事件编号">{selectedEvent.id}</Descriptions.Item>
-                      <Descriptions.Item label="事件类型">
-                        <Tag color={eventTypeColorMap[selectedEvent.eventType]}>
-                          {eventTypeTextMap[selectedEvent.eventType]}
-                        </Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="发生地点">
-                        <Space><EnvironmentOutlined />{selectedEvent.location}</Space>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="当前状态">
-                        <Tag color={eventStatusColorMap[selectedEvent.status]}>
-                          {eventStatusTextMap[selectedEvent.status]}
-                        </Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="开始时间">{selectedEvent.startTime}</Descriptions.Item>
-                      <Descriptions.Item label="结束时间">{selectedEvent.endTime || '-'}</Descriptions.Item>
-                      <Descriptions.Item label="负责人">
-                        <Space><UserOutlined />{selectedEvent.handler}</Space>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="涉及批次">
-                        {selectedEvent.affectedBatches.length} 个批次
-                      </Descriptions.Item>
-                      <Descriptions.Item label="事件描述" span={2}>
-                        {selectedEvent.description}
-                      </Descriptions.Item>
-                    </Descriptions>
-                  </Card>
+          <Card
+            title={
+              <Space>
+                <WarningOutlined style={{ color: '#fa8c16' }} />
+                断链事件列表
+                <Tag color="orange">{eventList.length}</Tag>
+              </Space>
+            }
+            extra={selectedEvent ? (
+              <Button type="text" size="small" onClick={() => setSelectedEvent(null)}>取消选中</Button>
+            ) : null}
+          >
+            <Table
+              columns={chainBreakEventColumns}
+              dataSource={eventList}
+              rowKey="id"
+              pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+              scroll={{ x: 1400 }}
+              expandable={{
+                expandedRowRender: chainBreakExpandedRowRender,
+                rowExpandable: (record) => record.affectedBatches.length > 0
+              }}
+              onRow={(r) => ({
+                style: { cursor: 'pointer', background: selectedEvent?.id === r.id ? '#fffbe6' : undefined }
+              })}
+            />
+          </Card>
 
-                  {temperatureRecords.length > 0 && (
-                    <Card title="温度曲线" style={{ marginTop: 16 }}>
-                      <ReactECharts option={tempChartOption} style={{ height: 250 }} />
-                    </Card>
-                  )}
-
-                  <Card
-                    title={
-                      <Space>
-                        <ScissorOutlined />
-                        涉及疫苗批次详情
-                        <Tag color="blue">{selectedEvent.affectedBatches.length} 个批次</Tag>
-                      </Space>
-                    }
-                    style={{ marginTop: 16 }}
+          {selectedEvent && (
+            <Card
+              style={{ marginTop: 16 }}
+              title={
+                <Space>
+                  <InfoCircleOutlined />
+                  事件详情 - {selectedEvent.id}
+                  <Tag color={eventTypeColorMap[selectedEvent.eventType]}>
+                    {eventTypeTextMap[selectedEvent.eventType]}
+                  </Tag>
+                  <Tag color={eventStatusColorMap[selectedEvent.status]}>
+                    {eventStatusTextMap[selectedEvent.status]}
+                  </Tag>
+                </Space>
+              }
+              extra={
+                <Space>
+                  <Button
+                    icon={<ExclamationCircleOutlined />}
+                    onClick={() => openAssessModal(selectedEvent)}
+                    disabled={selectedEvent.status === 'closed'}
                   >
-                    {renderChainBreakBatchDetail()}
-                  </Card>
+                    影响评估
+                  </Button>
+                </Space>
+              }
+            >
+              <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
+                <Descriptions.Item label="事件编号">{selectedEvent.id}</Descriptions.Item>
+                <Descriptions.Item label="事件类型">
+                  <Tag color={eventTypeColorMap[selectedEvent.eventType]}>
+                    {eventTypeTextMap[selectedEvent.eventType]}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="发生地点">
+                  <Space><EnvironmentOutlined />{selectedEvent.location}</Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="当前状态">
+                  <Tag color={eventStatusColorMap[selectedEvent.status]}>
+                    {eventStatusTextMap[selectedEvent.status]}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="开始时间">{selectedEvent.startTime}</Descriptions.Item>
+                <Descriptions.Item label="结束时间">{selectedEvent.endTime || '-'}</Descriptions.Item>
+                <Descriptions.Item label="负责人">
+                  <Space><UserOutlined />{selectedEvent.handler}</Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="涉及批次">
+                  {selectedEvent.affectedBatches.length} 个批次
+                </Descriptions.Item>
+                <Descriptions.Item label="事件描述" span={2}>
+                  {selectedEvent.description}
+                </Descriptions.Item>
+              </Descriptions>
 
-                  <Card title="处理时间线" style={{ marginTop: 16 }}>
-                    <Timeline
-                      mode="left"
-                      items={[
-                        {
-                          color: 'red',
-                          label: selectedEvent.startTime,
-                          children: (
-                            <div>
-                              <p style={{ margin: 0 }}><Tag color="red">事件发生</Tag></p>
-                              <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>{selectedEvent.description}</p>
-                              <p style={{ margin: '2px 0 0 0', fontSize: 12, color: '#666' }}>地点：{selectedEvent.location}</p>
-                            </div>
-                          )
-                        },
-                        ...(selectedEvent.endTime ? [
-                          {
-                            color: 'green',
-                            label: selectedEvent.endTime,
-                            children: (
-                              <div>
-                                <p style={{ margin: 0 }}><Tag color="green">事件结束</Tag></p>
-                                {selectedEvent.result && (
-                                  <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>处理结果：{selectedEvent.result}</p>
-                                )}
-                              </div>
-                            )
-                          }
-                        ] : [])
-                      ]}
-                    />
-                  </Card>
-
-                  {selectedEvent.result && (
-                    <Card title="处理结果与评估报告" style={{ marginTop: 16 }}>
-                      <Descriptions bordered column={1} size="small">
-                        <Descriptions.Item label="处理结果">{selectedEvent.result}</Descriptions.Item>
-                        <Descriptions.Item label="评估结论">
-                          该事件处理及时，未造成重大影响。涉及的疫苗批次已进行质量评估，
-                          合格批次继续使用，不合格批次已按规定销毁。
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Card>
-                  )}
-                </div>
-              ) : (
-                <div style={{ textAlign: 'center', padding: 100, color: '#999' }}>
-                  <WarningOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-                  <p>请从左侧选择一个事件查看详情</p>
-                </div>
+              {temperatureRecords.length > 0 && (
+                <Card title="温度曲线" style={{ marginBottom: 16 }} size="small">
+                  <ReactECharts option={tempChartOption} style={{ height: 250 }} />
+                </Card>
               )}
-            </Col>
-          </Row>
+
+              {chainBreakExpandedRowRender(selectedEvent)}
+            </Card>
+          )}
         </div>
       ),
     },
@@ -1142,7 +1845,7 @@ export default function TraceStatistics() {
       label: (
         <Space>
           <BarChartOutlined />
-          接种覆盖统计
+          接种统计
         </Space>
       ),
       children: (
@@ -1206,11 +1909,8 @@ export default function TraceStatistics() {
                 allowClear
                 showSearch
                 optionFilterProp="label"
-              >
-                {vaccineOptions.map(opt => (
-                  <Option key={opt.value} value={opt.value} label={opt.label}>{opt.label}</Option>
-                ))}
-              </Select>
+                options={vaccineOptions}
+              />
               <Select
                 placeholder="选择接种门诊"
                 value={clinicFilter || undefined}
@@ -1219,11 +1919,8 @@ export default function TraceStatistics() {
                 allowClear
                 showSearch
                 optionFilterProp="label"
-              >
-                {clinicOptions.map(opt => (
-                  <Option key={opt.value} value={opt.value} label={opt.label}>{opt.label}</Option>
-                ))}
-              </Select>
+                options={clinicOptions}
+              />
               <Button onClick={() => { setDateRange(null); setVaccineFilter(''); setClinicFilter('') }}>重置</Button>
             </Space>
           </Card>
@@ -1292,6 +1989,9 @@ export default function TraceStatistics() {
         onChange={(key) => setActiveTab(key as TabKey)}
         items={tabItems}
       />
+      {renderBatchProfileModal()}
+      {renderAssessModal()}
+      {renderRecordDetailModal()}
     </div>
   )
 }
